@@ -1,0 +1,31 @@
+FROM python:3.10-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy project files
+COPY requirements.txt ./
+COPY models.yaml ./
+# Use backend/server.py as the canonical API
+COPY backend ./backend
+
+# Install backend requirements
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Clone sd-scripts (sd3) and install its requirements
+RUN git clone -b sd3 https://github.com/kohya-ss/sd-scripts sd-scripts \
+ && pip install -r sd-scripts/requirements.txt
+
+# Persist models and outputs
+VOLUME ["/app/models", "/app/outputs"]
+
+EXPOSE 8001
+
+CMD ["uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8001"]
