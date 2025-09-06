@@ -5,8 +5,10 @@ type Props = {
   checked: boolean
   onCheckedChange: (v: boolean) => void
   id?: string
+  ariaLabel?: string
+  ariaLabelledby?: string
 }
-export function Switch({ checked, onCheckedChange, id }: Props) {
+export function Switch({ checked, onCheckedChange, id, ariaLabel, ariaLabelledby }: Props) {
   return (
     <button
       id={id}
@@ -16,6 +18,8 @@ export function Switch({ checked, onCheckedChange, id }: Props) {
       }
       aria-pressed={checked}
       role="switch"
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledby}
     >
       <span
         className={
