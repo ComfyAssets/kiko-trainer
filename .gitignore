@@ -6,11 +6,35 @@ __pycache__/
 # Local tooling
 .playwright-mcp/
 .claude/
+AGENTS.md
+AGENTS/
 
 # Runtime data
 datasets/
 outputs/
 venv/
+sd-scripts/
+models/
 
 # Logs
 server.log
+
+# Node / frontend
+node_modules/
+**/node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+**/package-lock.json
+**/yarn.lock
+**/pnpm-lock.yaml
+
+# Env files
+.env
+**/.env
+
+# Large model weights
+*.safetensors
+*.pt
+*.ckpt
+*.bin
