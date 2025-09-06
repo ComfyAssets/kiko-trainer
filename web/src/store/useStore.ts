@@ -53,6 +53,22 @@ const defaultConfig: TrainingConfig = {
   numRepeats: 10,
   trainBatchSize: 1,
   resolution: 512,
+  // New defaults
+  lrScheduler: 'cosine',
+  lrWarmupSteps: 0.05, // 5% of total steps
+  noiseOffset: 0.05,
+  flipSymmetry: false,
+  loraDropout: undefined,
+  networkAlpha: undefined,
+  rankDropout: undefined,
+  moduleDropout: undefined,
+  // Bucketing defaults (Flux LoRA)
+  enableBucket: true,
+  bucketResoSteps: 32,
+  minBucketReso: 256,
+  maxBucketReso: 1024,
+  bucketNoUpscale: false,
+  resizeInterpolation: undefined,
 };
 
 const defaultTrainingStatus: TrainingStatus = {
