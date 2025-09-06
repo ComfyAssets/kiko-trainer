@@ -27,6 +27,22 @@ export interface TrainingConfig {
   numRepeats: number;
   trainBatchSize: number;
   resolution: number;
+  // New advanced options
+  lrScheduler?: string;
+  lrWarmupSteps?: number; // int steps or <1.0 ratio
+  noiseOffset?: number;   // e.g., 0.05 for Flux
+  flipSymmetry?: boolean; // enable horizontal flip aug if character is symmetrical
+  loraDropout?: number;   // network_dropout rate, e.g., 0.1
+  networkAlpha?: number;  // LoRA alpha scaling
+  rankDropout?: number;   // Flux LoRA rank dropout
+  moduleDropout?: number; // Flux LoRA module dropout
+  // Bucketing
+  enableBucket?: boolean;
+  bucketResoSteps?: number;
+  minBucketReso?: number;
+  maxBucketReso?: number;
+  bucketNoUpscale?: boolean;
+  resizeInterpolation?: 'lanczos' | 'nearest' | 'bilinear' | 'linear' | 'bicubic' | 'cubic' | 'area' | 'box';
 }
 
 export interface ImageFile {
