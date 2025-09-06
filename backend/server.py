@@ -88,6 +88,56 @@ except Exception:
         print(f"[WARN] Could not import train_utils: {e}")
         tu_download = tu_gen_sh = tu_gen_toml = tu_resolve_path_without_quotes = None
 
+def ensure_train_utils() -> tuple[bool, str]:
+    """Attempt to (re)import train_utils if not already loaded."""
+    global tu_download, tu_gen_sh, tu_gen_toml, tu_resolve_path_without_quotes, tu_load_models_yaml
+    if tu_gen_sh and tu_gen_toml and tu_resolve_path_without_quotes:
+        return True, ""
+    try:
+        import importlib, sys as _sys
+        importlib.invalidate_caches()
+        _sys.modules.pop('train_utils', None)
+        _sys.modules.pop('backend.train_utils', None)
+        from train_utils import (
+            download as _dl,
+            gen_sh as _gsh,
+            gen_toml as _gtoml,
+            resolve_path_without_quotes as _r,
+            load_models_yaml as _load,
+        )
+        tu_download, tu_gen_sh, tu_gen_toml, tu_resolve_path_without_quotes, tu_load_models_yaml = _dl, _gsh, _gtoml, _r, _load
+        return True, ""
+    except Exception as e1:
+        try:
+            import importlib, sys as _sys
+            importlib.invalidate_caches()
+            _sys.modules.pop('backend.train_utils', None)
+            from backend.train_utils import download as _dl, gen_sh as _gsh, gen_toml as _gtoml, resolve_path_without_quotes as _r, load_models_yaml as _load
+            tu_download, tu_gen_sh, tu_gen_toml, tu_resolve_path_without_quotes, tu_load_models_yaml = _dl, _gsh, _gtoml, _r, _load
+            return True, ""
+        except Exception as e2:
+            # Final fallback: load directly from file path
+            try:
+                import importlib.util as _util, types as _types
+                from pathlib import Path as _Path
+                here = _Path(__file__).resolve().parent
+                fpath = here / 'train_utils.py'
+                spec = _util.spec_from_file_location('train_utils_dyn', fpath)
+                if spec and spec.loader:
+                    mod = _util.module_from_spec(spec)  # type: ignore
+                    spec.loader.exec_module(mod)  # type: ignore
+                    tu_download, tu_gen_sh, tu_gen_toml = mod.download, mod.gen_sh, mod.gen_toml
+                    tu_resolve_path_without_quotes, tu_load_models_yaml = mod.resolve_path_without_quotes, mod.load_models_yaml
+                    return True, ""
+                else:
+                    msg = f"train_utils import failed: {e1} | {e2} | direct load spec failed"
+                    print(f"[ERROR] {msg}")
+                    return False, msg
+            except Exception as e3:
+                msg = f"train_utils import failed: {e1} | {e2} | {e3}"
+                print(f"[ERROR] {msg}")
+                return False, msg
+
 # Serve model assets (previews) statically
 app.mount("/static", StaticFiles(directory=MODELS_DIR), name="static")
 # Serve arbitrary project files (used to preview output images)
@@ -1216,7 +1266,8 @@ async def list_models(path: Optional[str] = None):
     }
     
     try:
-        for file_path in model_path.iterdir():
+        # Walk recursively so nested component folders (unet/clip/vae) are discovered
+        for file_path in model_path.rglob('*'):
             if file_path.is_file():
                 # Get file extension
                 ext = file_path.suffix.lower()
@@ -1839,103 +1890,164 @@ def format_file_size(size_bytes: int) -> str:
 
 @app.post("/api/train/prepare")
 def api_train_prepare(payload: Dict[str, Any]):
-    if not tu_gen_sh or not tu_gen_toml or not tu_resolve_path_without_quotes:
-        return JSONResponse({"ok": False, "message": "training utilities unavailable"}, status_code=500)
+    try:
+        ok_utils, msg_utils = ensure_train_utils()
+        if not ok_utils:
+            return JSONResponse({"ok": False, "message": "training utilities unavailable", "detail": msg_utils}, status_code=500)
 
-    base_model = payload.get("base_model")
-    pretrained_path = payload.get("pretrained_path")
+        base_model = payload.get("base_model")
+        pretrained_path = payload.get("pretrained_path")
 
-    # Normalize common aliases from UI
-    if isinstance(base_model, str):
-        bm_norm = base_model.strip()
-        bm_norm = bm_norm.replace('_', '-')
-        if bm_norm.lower() in ("flux.1-dev", "flux1-dev", "flux-1-dev", "flux-dev", "flux.1 dev"):
-            base_model = "flux-dev"
-        elif bm_norm.lower() in ("flux.1-schnell", "flux1-schnell", "flux-1-schnell", "flux-schnell", "schnell"):
-            base_model = "flux-schnell"
-        else:
-            base_model = bm_norm
-    lora_name = payload.get("lora_name") or "MyLoRA"
-    output_name = lora_name
-    resolution = int(payload.get("resolution", 512))
-    seed = int(payload.get("seed", 42))
-    workers = int(payload.get("workers", 2))
-    learning_rate = str(payload.get("learning_rate", "8e-4"))
-    network_dim = int(payload.get("network_dim", 4))
-    max_train_epochs = int(payload.get("max_train_epochs", 16))
-    save_every_n_epochs = int(payload.get("save_every_n_epochs", 4))
-    timestep_sampling = str(payload.get("timestep_sampling", "shift"))
-    guidance_scale = float(payload.get("guidance_scale", 1.0))
-    vram = payload.get("vram", "20G")
-    sample_prompts = payload.get("sample_prompts", "")
-    sample_every_n_steps = int(payload.get("sample_every_n_steps", 0))
-    class_tokens = payload.get("class_tokens", "")
-    num_repeats = int(payload.get("num_repeats", 10))
-    train_batch_size = int(payload.get("train_batch_size", 1))
-    advanced_flags = payload.get("advanced_components", [])
+        # Normalize common aliases from UI
+        if isinstance(base_model, str):
+            bm_norm = base_model.strip()
+            bm_norm = bm_norm.replace('_', '-')
+            low = bm_norm.lower()
+            if low in ("flux.1-dev", "flux1-dev", "flux-1-dev", "flux-dev", "flux.1 dev", "black-forest-labs/flux.1-dev"):
+                base_model = "flux-dev"
+            elif low in ("flux.1-schnell", "flux1-schnell", "flux-1-schnell", "flux-schnell", "schnell", "black-forest-labs/flux.1-schnell"):
+                base_model = "flux-schnell"
+            else:
+                base_model = bm_norm
 
-    sh_text = tu_gen_sh(
-        base_model,
-        output_name,
-        resolution,
-        seed,
-        workers,
-        learning_rate,
-        network_dim,
-        max_train_epochs,
-        save_every_n_epochs,
-        timestep_sampling,
-        guidance_scale,
-        vram,
-        sample_prompts,
-        sample_every_n_steps,
-        advanced_flags,
-    )
-    dataset_folder = payload.get("dataset_folder") or f"datasets/{output_name}"
-    toml_text = tu_gen_toml(
-        dataset_folder,
-        resolution,
-        class_tokens,
-        num_repeats,
-        train_batch_size,
-    )
-
-    out_dir = tu_resolve_path_without_quotes(f"outputs/{output_name}")
-    os.makedirs(out_dir, exist_ok=True)
-    file_type = "bat" if os.name == "nt" else "sh"
-    sh_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/train.{file_type}")
-    # If a specific pretrained checkpoint path was provided, override in script
-    if pretrained_path:
+        lora_name = payload.get("lora_name") or "MyLoRA"
+        output_name = lora_name
+        resolution = int(payload.get("resolution", 512))
+        seed = int(payload.get("seed", 42))
+        workers = int(payload.get("workers", 2))
+        learning_rate = str(payload.get("learning_rate", "8e-4"))
+        network_dim = int(payload.get("network_dim", 4))
+        network_alpha = payload.get("network_alpha")
         try:
-            sh_text = re.sub(r'--pretrained_model_name_or_path\s+"[^"]+"', f'--pretrained_model_name_or_path "{pretrained_path}"', sh_text)
+            network_alpha = float(network_alpha) if network_alpha is not None else None
         except Exception:
-            pass
-    with open(sh_path, "w", encoding="utf-8") as f:
-        f.write(sh_text)
-    ds_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/dataset.toml")
-    with open(ds_path, "w", encoding="utf-8") as f:
-        f.write(toml_text)
-    sp_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/sample_prompts.txt")
-    with open(sp_path, "w", encoding="utf-8") as f:
-        f.write(sample_prompts)
+            network_alpha = None
+        # Flux LoRA-specific dropouts
+        rank_dropout = payload.get("rank_dropout")
+        module_dropout = payload.get("module_dropout")
+        try:
+            rank_dropout = float(rank_dropout) if rank_dropout is not None else None
+        except Exception:
+            rank_dropout = None
+        try:
+            module_dropout = float(module_dropout) if module_dropout is not None else None
+        except Exception:
+            module_dropout = None
+        max_train_epochs = int(payload.get("max_train_epochs", 16))
+        save_every_n_epochs = int(payload.get("save_every_n_epochs", 4))
+        timestep_sampling = str(payload.get("timestep_sampling", "shift"))
+        guidance_scale = float(payload.get("guidance_scale", 1.0))
+        vram = payload.get("vram", "20G")
+        sample_prompts = payload.get("sample_prompts", "")
+        sample_every_n_steps = int(payload.get("sample_every_n_steps", 0))
+        class_tokens = payload.get("class_tokens", "")
+        num_repeats = int(payload.get("num_repeats", 10))
+        train_batch_size = int(payload.get("train_batch_size", 1))
+        advanced_flags = payload.get("advanced_components", [])
+        # New optional training params
+        lr_scheduler = payload.get("lr_scheduler")
+        lr_warmup_steps = payload.get("lr_warmup_steps")
+        noise_offset = payload.get("noise_offset")
+        network_dropout = payload.get("network_dropout")
+        flip_aug = bool(payload.get("flip_aug", False))
+        # Bucketing options
+        enable_bucket = bool(payload.get("enable_bucket", True))
+        min_bucket_reso = payload.get("min_bucket_reso")
+        max_bucket_reso = payload.get("max_bucket_reso")
+        bucket_reso_steps = payload.get("bucket_reso_steps")
+        bucket_no_upscale = bool(payload.get("bucket_no_upscale", False))
+        resize_interpolation = payload.get("resize_interpolation")
+        try:
+            min_bucket_reso = int(min_bucket_reso) if min_bucket_reso is not None else None
+        except Exception:
+            min_bucket_reso = None
+        try:
+            max_bucket_reso = int(max_bucket_reso) if max_bucket_reso is not None else None
+        except Exception:
+            max_bucket_reso = None
+        try:
+            bucket_reso_steps = int(bucket_reso_steps) if bucket_reso_steps is not None else None
+        except Exception:
+            bucket_reso_steps = None
 
-    run_id = str(uuid.uuid4())
-    RUNS[run_id] = {
-        "status": "prepared",
-        "logs": [],
-        "output_name": output_name,
-        "base_model": base_model,
-        "sh_path": sh_path,
-        "pretrained_path": pretrained_path,
-    }
-    return {
-        "ok": True,
-        "run_id": run_id,
-        "output_name": output_name,
-        "sh_path": sh_path,
-        "script": sh_text,
-        "dataset": toml_text,
-    }
+        sh_text = tu_gen_sh(
+            base_model,
+            output_name,
+            resolution,
+            seed,
+            workers,
+            learning_rate,
+            network_dim,
+            network_alpha,
+            # advanced
+            max_train_epochs,
+            save_every_n_epochs,
+            timestep_sampling,
+            guidance_scale,
+            vram,
+            sample_prompts,
+            sample_every_n_steps,
+            advanced_flags,
+            lr_scheduler,
+            lr_warmup_steps,
+            noise_offset,
+            network_dropout,
+            rank_dropout,
+            module_dropout,
+            pretrained_path,
+        )
+        dataset_folder = payload.get("dataset_folder") or f"datasets/{output_name}"
+        toml_text = tu_gen_toml(
+            dataset_folder,
+            resolution,
+            class_tokens,
+            num_repeats,
+            train_batch_size,
+            flip_aug,
+            enable_bucket,
+            min_bucket_reso,
+            max_bucket_reso,
+            bucket_reso_steps,
+            bucket_no_upscale,
+            resize_interpolation,
+        )
+
+        out_dir = tu_resolve_path_without_quotes(f"outputs/{output_name}")
+        os.makedirs(out_dir, exist_ok=True)
+        file_type = "bat" if os.name == "nt" else "sh"
+        sh_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/train.{file_type}")
+        # Override handled directly inside gen_sh when pretrained_path is provided
+        with open(sh_path, "w", encoding="utf-8") as f:
+            f.write(sh_text)
+        ds_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/dataset.toml")
+        with open(ds_path, "w", encoding="utf-8") as f:
+            f.write(toml_text)
+        sp_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/sample_prompts.txt")
+        with open(sp_path, "w", encoding="utf-8") as f:
+            f.write(sample_prompts)
+
+        run_id = str(uuid.uuid4())
+        RUNS[run_id] = {
+            "status": "prepared",
+            "logs": [],
+            "output_name": output_name,
+            "base_model": base_model,
+            "sh_path": sh_path,
+            "pretrained_path": pretrained_path,
+        }
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "output_name": output_name,
+            "sh_path": sh_path,
+            "script": sh_text,
+            "dataset": toml_text,
+        }
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print("[ERROR] /api/train/prepare failed:\n", tb)
+        return JSONResponse({"ok": False, "error": str(e), "trace": tb}, status_code=500)
 
 @app.post("/api/train/prepare-upload")
 async def api_train_prepare_upload(
@@ -1946,6 +2058,9 @@ async def api_train_prepare_upload(
     workers: int = Form(2),
     learning_rate: str = Form("8e-4"),
     network_dim: int = Form(4),
+    network_alpha: float | None = Form(None),
+    rank_dropout: float | None = Form(None),
+    module_dropout: float | None = Form(None),
     max_train_epochs: int = Form(16),
     save_every_n_epochs: int = Form(4),
     timestep_sampling: str = Form("shift"),
@@ -1958,65 +2073,119 @@ async def api_train_prepare_upload(
     train_batch_size: int = Form(1),
     dataset_folder: Optional[str] = Form(None),
     pretrained_path: Optional[str] = Form(None),
+    # Advanced options (optional)
+    lr_scheduler: Optional[str] = Form(None),
+    lr_warmup_steps: Optional[float] = Form(None),
+    noise_offset: Optional[float] = Form(None),
+    flip_aug: Optional[bool] = Form(False),
+    # Bucketing options
+    enable_bucket: Optional[bool] = Form(True),
+    min_bucket_reso: Optional[int] = Form(256),
+    max_bucket_reso: Optional[int] = Form(1024),
+    bucket_reso_steps: Optional[int] = Form(32),
+    bucket_no_upscale: Optional[bool] = Form(False),
+    resize_interpolation: Optional[str] = Form(None),
+    network_dropout: Optional[float] = Form(None),
     captions: str = Form("[]"),
     images: List[UploadFile] = File(None),
 ):
-    # Determine dataset folder
-    output_name = lora_name
-    ds_folder = dataset_folder or f"datasets/{output_name}"
-    ds_abs = tu_resolve_path_without_quotes(ds_folder) if tu_resolve_path_without_quotes else str((ROOT / ds_folder))
-    os.makedirs(ds_abs, exist_ok=True)
-
-    # Save uploaded images + captions
     try:
-        caps = json.loads(captions or "[]")
-    except Exception:
-        caps = []
-    if images:
-        for idx, uf in enumerate(images):
-            content = await uf.read()
-            fname = uf.filename or f"img_{idx}.png"
-            out_path = Path(ds_abs) / fname
-            with open(out_path, 'wb') as f:
-                f.write(content)
-            # Write caption sidecar
-            cap_text = ''
-            if idx < len(caps):
-                cap_text = str(caps[idx] or '')
-            full_caption = f"{class_tokens} {cap_text}".strip()
-            with open(out_path.with_suffix('.txt'), 'w') as tf:
-                tf.write(full_caption)
+        ok_utils, msg_utils = ensure_train_utils()
+        if not ok_utils:
+            return JSONResponse({"ok": False, "message": "training utilities unavailable", "detail": msg_utils}, status_code=500)
+        # Determine dataset folder
+        output_name = lora_name
+        ds_folder = dataset_folder or f"datasets/{output_name}"
+        ds_abs = tu_resolve_path_without_quotes(ds_folder) if tu_resolve_path_without_quotes else str((ROOT / ds_folder))
+        os.makedirs(ds_abs, exist_ok=True)
 
-    # Generate script and toml
-    payload = {
-        "base_model": base_model,
-        "lora_name": lora_name,
-        "resolution": resolution,
-        "seed": seed,
-        "workers": workers,
-        "learning_rate": learning_rate,
-        "network_dim": network_dim,
-        "max_train_epochs": max_train_epochs,
-        "save_every_n_epochs": save_every_n_epochs,
-        "timestep_sampling": timestep_sampling,
-        "guidance_scale": guidance_scale,
-        "vram": vram,
-        "sample_prompts": sample_prompts,
-        "sample_every_n_steps": sample_every_n_steps,
-        "class_tokens": class_tokens,
-        "num_repeats": num_repeats,
-        "train_batch_size": train_batch_size,
-        "dataset_folder": ds_folder,
-    }
-    if pretrained_path:
-        payload["pretrained_path"] = pretrained_path
-    return api_train_prepare(payload)
+        # Save uploaded images + captions
+        try:
+            caps = json.loads(captions or "[]")
+        except Exception:
+            caps = []
+        if images:
+            for idx, uf in enumerate(images):
+                content = await uf.read()
+                fname = uf.filename or f"img_{idx}.png"
+                out_path = Path(ds_abs) / fname
+                with open(out_path, 'wb') as f:
+                    f.write(content)
+                # Write caption sidecar
+                cap_text = ''
+                if idx < len(caps):
+                    cap_text = str(caps[idx] or '')
+                full_caption = f"{class_tokens} {cap_text}".strip()
+                with open(out_path.with_suffix('.txt'), 'w') as tf:
+                    tf.write(full_caption)
+
+        # Build payload
+        payload = {
+            "base_model": base_model,
+            "lora_name": lora_name,
+            "resolution": resolution,
+            "seed": seed,
+            "workers": workers,
+            "learning_rate": learning_rate,
+            "network_dim": network_dim,
+            "network_alpha": network_alpha,
+            "rank_dropout": rank_dropout,
+            "module_dropout": module_dropout,
+            "max_train_epochs": max_train_epochs,
+            "save_every_n_epochs": save_every_n_epochs,
+            "timestep_sampling": timestep_sampling,
+            "guidance_scale": guidance_scale,
+            "vram": vram,
+            "sample_prompts": sample_prompts,
+            "sample_every_n_steps": sample_every_n_steps,
+            "class_tokens": class_tokens,
+            "num_repeats": num_repeats,
+            "train_batch_size": train_batch_size,
+            "dataset_folder": ds_folder,
+        }
+        if pretrained_path:
+            payload["pretrained_path"] = pretrained_path
+        if lr_scheduler is not None:
+            payload["lr_scheduler"] = lr_scheduler
+        if lr_warmup_steps is not None:
+            payload["lr_warmup_steps"] = lr_warmup_steps
+        if noise_offset is not None:
+            payload["noise_offset"] = noise_offset
+        if flip_aug is not None:
+            payload["flip_aug"] = flip_aug
+        if network_dropout is not None:
+            payload["network_dropout"] = network_dropout
+        # Bucketing
+        if enable_bucket is not None:
+            payload["enable_bucket"] = enable_bucket
+        if min_bucket_reso is not None:
+            payload["min_bucket_reso"] = min_bucket_reso
+        if max_bucket_reso is not None:
+            payload["max_bucket_reso"] = max_bucket_reso
+        if bucket_reso_steps is not None:
+            payload["bucket_reso_steps"] = bucket_reso_steps
+        if bucket_no_upscale is not None:
+            payload["bucket_no_upscale"] = bucket_no_upscale
+        if resize_interpolation is not None:
+            payload["resize_interpolation"] = resize_interpolation
+        # Normalize VRAM alias
+        if isinstance(payload.get("vram"), str):
+            vr = str(payload["vram"]).upper().replace("B", "")
+            payload["vram"] = vr
+
+        return api_train_prepare(payload)
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print("[ERROR] /api/train/prepare-upload failed:\n", tb)
+        return JSONResponse({"ok": False, "error": str(e), "trace": tb}, status_code=500)
 
 
 def _stream_process(proc: subprocess.Popen, run_id: str):
     try:
-        for line in iter(proc.stdout.readline, b""):
-            RUNS[run_id]["logs"].append(line.decode(errors="ignore"))
+        # Read text lines until EOF
+        for line in iter(proc.stdout.readline, ""):
+            RUNS[run_id]["logs"].append(line)
         proc.wait()
         code = proc.returncode
         RUNS[run_id]["status"] = "finished" if code == 0 else f"error:{code}"
@@ -2066,6 +2235,9 @@ def api_train_start(payload: Dict[str, Any]):
         stderr=subprocess.STDOUT,
         env=env_vars,
         bufsize=1,
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
         start_new_session=True,
     )
     run["status"] = "running"

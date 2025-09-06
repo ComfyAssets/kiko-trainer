@@ -8,6 +8,8 @@
   import { Button } from '../components/ui/button'
   import { Dialog } from '../components/ui/dialog'
   import { Separator } from '../components/ui/separator'
+  import { Switch } from '../components/ui/switch'
+  import { CollapsibleSection } from '../components/CollapsibleSection'
   import { Play, FileText, FileJson, HelpCircle, Image, ChevronDown } from 'lucide-react'
   import {
     Tooltip,
@@ -36,22 +38,49 @@
     const [guidance, setGuidance] = React.useState(1.0)
     const [samples, setSamples] = React.useState('')
     const [sampleEvery, setSampleEvery] = React.useState(0)
-    const [numRepeats, setNumRepeats] = React.useState(10)
-    const [seed, setSeed] = React.useState(42)
+  const [numRepeats, setNumRepeats] = React.useState(10)
+  const [seed, setSeed] = React.useState(42)
   const [workers, setWorkers] = React.useState(2)
+  // Advanced options
+  const [lrScheduler, setLrScheduler] = React.useState('cosine')
+  const [lrWarmup, setLrWarmup] = React.useState<number>(0.05)
+  const [noiseOffset, setNoiseOffset] = React.useState<number>(0)
+  const [flipSymmetry, setFlipSymmetry] = React.useState<boolean>(false)
+  const [loraDropout, setLoraDropout] = React.useState<number | undefined>(undefined)
+  const [networkAlpha, setNetworkAlpha] = React.useState<number | undefined>(undefined)
+  const [rankDropout, setRankDropout] = React.useState<number | undefined>(undefined)
+  const [moduleDropout, setModuleDropout] = React.useState<number | undefined>(undefined)
+  // Bucketing (advanced)
+  const [enableBucket, setEnableBucket] = React.useState<boolean>(true)
+  const [bucketResoSteps, setBucketResoSteps] = React.useState<number>(64)
+  const [minBucketReso, setMinBucketReso] = React.useState<number>(256)
+  const [maxBucketReso, setMaxBucketReso] = React.useState<number>(1024)
+  const [bucketNoUpscale, setBucketNoUpscale] = React.useState<boolean>(false)
+  const [resizeInterpolation, setResizeInterpolation] = React.useState<string | undefined>(undefined)
+
+  const sanitizeBucketStep = (v: number) => Math.max(64, Math.round((Number(v) || 64)/64)*64)
 
     const [openScript, setOpenScript] = React.useState(false)
+    // UI mode: basic vs advanced
+    const [uiMode, setUiMode] = React.useState<string>(() => {
+      try { return localStorage.getItem('kiko.trainingMode') || 'advanced' } catch { return 'advanced' }
+    })
+    const isAdvanced = uiMode === 'advanced'
     const [openDataset, setOpenDataset] = React.useState(false)
     const [showModelPicker, setShowModelPicker] = React.useState(false)
     const [availableModels, setAvailableModels] = React.useState<any[]>([])
   const [selectedModelData, setSelectedModelData] = React.useState<any>(null)
-  const { images, config } = useStore()
+  const { images, config, updateConfig } = useStore()
 
   // Sync local training params from global config (populated on Import Training)
   React.useEffect(() => {
     if (!config) return
     try {
       if (config.baseModel) setBaseModel(config.baseModel)
+      else {
+        const bm = (()=>{ try { return localStorage.getItem('kiko.baseModel') } catch { return null } })()
+        if (bm) setBaseModel(bm)
+      }
       if (config.vram) setVram(config.vram)
       if (config.learningRate) setLr(config.learningRate)
       if (config.networkDim != null) setDim(Number(config.networkDim))
@@ -66,6 +95,21 @@
       if (config.numRepeats != null) setNumRepeats(Number(config.numRepeats))
       if (config.seed != null) setSeed(Number(config.seed))
       if (config.workers != null) setWorkers(Number(config.workers))
+      if ((config as any).lrScheduler) setLrScheduler(String((config as any).lrScheduler))
+      if ((config as any).lrWarmupSteps != null) setLrWarmup(Number((config as any).lrWarmupSteps))
+      if ((config as any).noiseOffset != null) setNoiseOffset(Number((config as any).noiseOffset))
+      if ((config as any).flipSymmetry != null) setFlipSymmetry(Boolean((config as any).flipSymmetry))
+      if ((config as any).loraDropout != null) setLoraDropout(Number((config as any).loraDropout))
+      if ((config as any).networkAlpha != null) setNetworkAlpha(Number((config as any).networkAlpha))
+      if ((config as any).rankDropout != null) setRankDropout(Number((config as any).rankDropout))
+      if ((config as any).moduleDropout != null) setModuleDropout(Number((config as any).moduleDropout))
+      // bucketing
+      if ((config as any).enableBucket != null) setEnableBucket(Boolean((config as any).enableBucket))
+      if ((config as any).bucketResoSteps != null) setBucketResoSteps(Number((config as any).bucketResoSteps))
+      if ((config as any).minBucketReso != null) setMinBucketReso(Number((config as any).minBucketReso))
+      if ((config as any).maxBucketReso != null) setMaxBucketReso(Number((config as any).maxBucketReso))
+      if ((config as any).bucketNoUpscale != null) setBucketNoUpscale(Boolean((config as any).bucketNoUpscale))
+      if ((config as any).resizeInterpolation != null) setResizeInterpolation(String((config as any).resizeInterpolation))
     } catch {}
   }, [config])
 
@@ -118,12 +162,19 @@
       const filename = (model.filename || model.name || '').toString()
       const modelName = model.metadata?.name || filename.replace('.safetensors', '')
       setBaseModel(modelName)
+      try { updateConfig('baseModel', modelName as any) } catch {}
+      try { localStorage.setItem('kiko.baseModel', modelName) } catch {}
       setSelectedModelData(model)
       setShowModelPicker(false)
     }
 
     // Generate the actual training script
-  const trainingConfig = {
+    const bucketStep = sanitizeBucketStep(bucketResoSteps)
+    const augSummary = `${flipSymmetry ? 'flip on' : 'flip off'}, step ${bucketStep}, ${minBucketReso}–${maxBucketReso}, ${bucketNoUpscale ? 'no upscale' : 'upscale'}`
+
+    const sampleCount = (samples || '').split('\n').filter(l => l.trim()).length
+    const sampleSummary = sampleEvery === 0 ? 'disabled' : `every ${sampleEvery} steps, ${sampleCount} prompt${sampleCount===1?'':'s'}`
+const trainingConfig = {
       baseModel,
       loraName,
       resolution: parseInt(res),
@@ -142,6 +193,13 @@
       numRepeats,
       trainBatchSize: batch,
       datasetFolder,
+      // bucketing
+      enableBucket,
+      bucketResoSteps: bucketStep,
+      minBucketReso,
+      maxBucketReso,
+      bucketNoUpscale,
+      resizeInterpolation,
     }
 
     const script = generateTrainingScript(trainingConfig)
@@ -155,6 +213,32 @@
   const [metrics, setMetrics] = React.useState<any>(null)
   const metricsTimer = React.useRef<number | null>(null)
   const [serverActiveRun, setServerActiveRun] = React.useState<{ run_id: string, status: string } | null>(null)
+
+  // Bottom dock for Training Output
+  const [consoleOpen, setConsoleOpen] = React.useState<boolean>(() => {
+    try { return localStorage.getItem('kiko.console.open') !== 'false' } catch { return true }
+  })
+  const [consoleHeight, setConsoleHeight] = React.useState<number>(() => {
+    try { return Number(localStorage.getItem('kiko.console.h') || 360) } catch { return 360 }
+  })
+  const resizeRef = React.useRef<boolean>(false)
+  React.useEffect(() => { try { localStorage.setItem('kiko.console.open', String(consoleOpen)) } catch {} }, [consoleOpen])
+  React.useEffect(() => { try { localStorage.setItem('kiko.console.h', String(consoleHeight)) } catch {} }, [consoleHeight])
+  React.useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return
+      const vh = window.innerHeight
+      const newH = Math.min(Math.max(vh - e.clientY, 160), Math.round(vh * 0.9))
+      setConsoleHeight(newH)
+    }
+    const onUp = () => { resizeRef.current = false }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
 
   const clearLogsTimer = () => {
     if (logsTimer.current) {
@@ -205,7 +289,8 @@
       pollMetrics()
       // If we have images in store, upload them to backend dataset folder
       let prep: Response
-      if (images.length > 0) {
+      const shouldUpload = images.length > 0 && !(datasetFolder && datasetFolder.trim().length > 0)
+      if (shouldUpload) {
         const fd = new FormData()
         fd.append('base_model', baseModel)
         fd.append('lora_name', loraName || 'MyLoRA')
@@ -225,6 +310,24 @@
         fd.append('num_repeats', String(numRepeats))
         fd.append('train_batch_size', String(batch))
         fd.append('dataset_folder', datasetFolder || '')
+        // advanced options (send when in advanced mode)
+        if (isAdvanced) {
+          if (lrScheduler) fd.append('lr_scheduler', String(lrScheduler))
+          if (lrWarmup != null) fd.append('lr_warmup_steps', String(lrWarmup))
+          if (noiseOffset != null) fd.append('noise_offset', String(noiseOffset))
+          fd.append('flip_aug', String(!!flipSymmetry))
+          if (loraDropout != null) fd.append('network_dropout', String(loraDropout))
+          if (networkAlpha != null) fd.append('network_alpha', String(networkAlpha))
+          if (rankDropout != null) fd.append('rank_dropout', String(rankDropout))
+          if (moduleDropout != null) fd.append('module_dropout', String(moduleDropout))
+          // Bucketing
+          fd.append('enable_bucket', String(!!enableBucket))
+          if (minBucketReso != null) fd.append('min_bucket_reso', String(minBucketReso))
+          if (maxBucketReso != null) fd.append('max_bucket_reso', String(maxBucketReso))
+          if (bucketResoSteps != null) fd.append('bucket_reso_steps', String(sanitizeBucketStep(bucketResoSteps)))
+          fd.append('bucket_no_upscale', String(!!bucketNoUpscale))
+          if (resizeInterpolation) fd.append('resize_interpolation', String(resizeInterpolation))
+        }
         if (selectedModelData?.path) {
           fd.append('pretrained_path', selectedModelData.path)
         }
@@ -233,7 +336,7 @@
         images.forEach(img => fd.append('images', img.file, img.file.name))
         prep = await fetch(apiUrl('/api/train/prepare-upload'), { method: 'POST', body: fd })
       } else {
-        const prepBody = {
+        const prepBody: any = {
           base_model: baseModel,
           pretrained_path: selectedModelData?.path,
           lora_name: loraName || 'MyLoRA',
@@ -255,13 +358,36 @@
           dataset_folder: datasetFolder || undefined,
           advanced_components: [],
         }
+        if (isAdvanced) {
+          prepBody.lr_scheduler = lrScheduler
+          prepBody.lr_warmup_steps = lrWarmup
+          prepBody.noise_offset = noiseOffset
+          prepBody.flip_aug = flipSymmetry
+          prepBody.network_dropout = loraDropout
+          prepBody.network_alpha = networkAlpha
+          prepBody.rank_dropout = rankDropout
+          prepBody.module_dropout = moduleDropout
+          // Bucketing
+          prepBody.enable_bucket = enableBucket
+          prepBody.min_bucket_reso = minBucketReso
+          prepBody.max_bucket_reso = maxBucketReso
+          prepBody.bucket_reso_steps = sanitizeBucketStep(bucketResoSteps)
+          prepBody.bucket_no_upscale = bucketNoUpscale
+          prepBody.resize_interpolation = resizeInterpolation
+        }
         prep = await fetch(apiUrl('/api/train/prepare'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(prepBody)
         })
       }
-      if (!prep.ok) throw new Error('prepare failed')
+      if (!prep.ok) {
+        try {
+          const err = await prep.json()
+          console.error('Prepare error:', err)
+        } catch {}
+        throw new Error('prepare failed')
+      }
       const prepData = await prep.json()
       const rid = prepData.run_id as string
       setRunId(rid)
@@ -351,6 +477,11 @@
         params: {
           baseModel, vram, lr, dim, epochs, saveEvery, batch, res, timestep, guidance,
           samplePrompts: samples, sampleEvery, numRepeats, seed, workers,
+          // advanced
+          lrScheduler, lrWarmup, noiseOffset, flipSymmetry,
+          loraDropout, networkAlpha, rankDropout, moduleDropout,
+          // bucketing
+          enableBucket, bucketResoSteps: sanitizeBucketStep(bucketResoSteps), minBucketReso, maxBucketReso, bucketNoUpscale, resizeInterpolation,
         },
         images: imagePayload,
       }
@@ -427,71 +558,144 @@
       <div className="grid lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              Training Parameters
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <HelpCircle className="w-4 h-4 text-muted-foreground cursor-help" />
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs">
-                  <p>Configure the training hyperparameters for your LoRA. Higher learning rates train faster but may overfit. More epochs improve quality but take longer.</p>
-                </TooltipContent>
-              </Tooltip>
-            </CardTitle>
+            <div className="flex items-center justify-between gap-4">
+              <CardTitle className="flex items-center gap-2">
+                Training Parameters
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <HelpCircle className="w-4 h-4 text-muted-foreground cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p>Configure the training hyperparameters for your LoRA. Higher learning rates train faster but may overfit. More epochs improve quality but take longer.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <label className="text-xs opacity-70">Mode</label>
+                <Select
+                  value={uiMode}
+                  onChange={(e) => { setUiMode(e.target.value); try { localStorage.setItem('kiko.trainingMode', e.target.value) } catch {} }}
+                  options={[
+                    { value: 'basic', label: 'Basic' },
+                    { value: 'advanced', label: 'Advanced' },
+                  ]}
+                />
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Model & Hardware first */}
+            <CollapsibleSection title="Model & Hardware" storageKey="kiko.modelhw" className="p-4 rounded-md border border-zinc-800 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="flex items-center gap-2">
+                    Base Model
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>FLUX.1-dev: Higher quality, slower generation. FLUX.1-schnell: Faster but lower quality. Use dev for best results.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowModelPicker(true)}
+                    className="w-full justify-between text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      {selectedModelData?.preview_image ? (
+                        <img 
+                          src={apiUrl(`/static/${selectedModelData.preview_image.split('/').pop()}`)}
+                          alt={baseModel}
+                          className="w-6 h-6 object-cover rounded"
+                        />
+                      ) : (
+                        <Image className="w-4 h-4 text-muted-foreground" />
+                      )}
+                      <span className="truncate">{baseModel}</span>
+                    </div>
+                    <ChevronDown className="w-4 h-4 opacity-50" />
+                  </Button>
+                </div>
+                <div>
+                  <Label className="flex items-center gap-2">
+                    VRAM Configuration
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>Select based on your GPU memory. 12GB minimum for basic training. 20GB+ recommended for stable training without crashes.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
+                  <Select value={vram} onChange={e=>setVram(e.target.value)} options={[
+                    {value:'12GB', label:'12GB'},
+                    {value:'16GB', label:'16GB'},
+                    {value:'20GB', label:'20GB'},
+                    {value:'24GB', label:'24GB+'},
+                  ]} />
+                </div>
+              </div>
+            </CollapsibleSection>
+
+            {/* Learning Schedule after Model & Hardware */}
+            <CollapsibleSection
+              title="Learning Schedule"
+              className="p-4 rounded-md border border-zinc-800 space-y-4"
+              summary={`${lrScheduler || 'scheduler'}, warmup ${lrWarmup}`}
+              storageKey="kiko.advanced.schedule"
+            >
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="flex items-center gap-2">
+                    LR Scheduler
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>Learning rate schedule. Cosine with a warmup generally refines late training better than constant.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
+                  <Select value={lrScheduler} onChange={e=>setLrScheduler(String(e.target.value))} options={[ 
+                    {value:'constant', label:'constant'},
+                    {value:'constant_with_warmup', label:'constant_with_warmup'},
+                    {value:'linear', label:'linear'},
+                    {value:'cosine', label:'cosine'},
+                    {value:'cosine_with_restarts', label:'cosine_with_restarts'},
+                    {value:'polynomial', label:'polynomial'},
+                    {value:'inverse_sqrt', label:'inverse_sqrt'},
+                    {value:'cosine_with_min_lr', label:'cosine_with_min_lr'},
+                    {value:'warmup_stable_decay', label:'warmup_stable_decay'},
+                    {value:'piecewise_constant', label:'piecewise_constant'},
+                    {value:'adafactor', label:'adafactor'},
+                  ]} />
+                </div>
+                <div>
+                  <Label className="flex items-center gap-2">
+                    Warmup (steps or ratio &lt; 1)
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>Use integer steps or a ratio like 0.05 (5% of total steps). Warmup helps stabilize early training.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
+                  <Input type="number" value={Number(lrWarmup)} onChange={e=>setLrWarmup(Number(e.target.value))} step={0.01} min={0} />
+                </div>
+              </div>
+            </CollapsibleSection>
+
+            {/* Core training fields */}
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label className="flex items-center gap-2">
-                  Base Model
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      <p>FLUX.1-dev: Higher quality, slower generation. FLUX.1-schnell: Faster but lower quality. Use dev for best results.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </Label>
-                <Button
-                  variant="outline"
-                  onClick={() => setShowModelPicker(true)}
-                  className="w-full justify-between text-left"
-                >
-                  <div className="flex items-center gap-2">
-                    {selectedModelData?.preview_image ? (
-                      <img 
-                        src={apiUrl(`/static/${selectedModelData.preview_image.split('/').pop()}`)}
-                        alt={baseModel}
-                        className="w-6 h-6 object-cover rounded"
-                      />
-                    ) : (
-                      <Image className="w-4 h-4 text-muted-foreground" />
-                    )}
-                    <span className="truncate">{baseModel}</span>
-                  </div>
-                  <ChevronDown className="w-4 h-4 opacity-50" />
-                </Button>
-              </div>
-              <div>
-                <Label className="flex items-center gap-2">
-                  VRAM Configuration
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      <p>Select based on your GPU memory. 12GB minimum for basic training. 20GB+ recommended for stable training without crashes.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </Label>
-                <Select value={vram} onChange={e=>setVram(e.target.value)} options={[
-                  {value:'12GB', label:'12GB'},
-                  {value:'16GB', label:'16GB'},
-                  {value:'20GB', label:'20GB'},
-                  {value:'24GB', label:'24GB+'},
-                ]} />
-              </div>
+              
+            
               <div>
                 <Label className="flex items-center gap-2">
                   Learning Rate
@@ -526,6 +730,7 @@
                 </Label>
                 <Input type="number" value={dim} onChange={e=>setDim(Number(e.target.value))} />
               </div>
+
               <div>
                 <Label className="flex items-center gap-2">
                   Max Epochs
@@ -634,7 +839,146 @@
                 <Input type="number" step="0.1" value={guidance} onChange={e=>setGuidance(Number(e.target.value))} />
                 <p className="text-xs text-gray-400 mt-1">Current: {guidance}</p>
               </div>
-              <div>
+              {/* Advanced-only block */}
+              {uiMode === 'advanced' && (
+                <>
+                  <div>
+                    <Label className="flex items-center gap-2">
+                      Network Alpha
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>LoRA alpha scaling. Often same as rank or half the rank. If unset, defaults to 1.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Input type="number" value={networkAlpha ?? 0} onChange={e=>setNetworkAlpha(Number(e.target.value))} step={0.1} min={0} />
+                  </div>
+                  <div>
+                    <Label className="flex items-center gap-2">
+                      Rank Dropout (Flux LoRA)
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>Randomly drops LoRA ranks each step (<code>--network_args \"rank_dropout=...\"</code>). Try 0.1.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Input type="number" value={rankDropout ?? 0} onChange={e=>setRankDropout(Number(e.target.value))} step={0.01} min={0} max={1} />
+                  </div>
+                </>
+              )}
+              {uiMode === 'advanced' && (<div>
+                <Label className="flex items-center gap-2">
+                  Module Dropout (Flux LoRA)
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p>Randomly disables entire LoRA modules (<code>--network_args "module_dropout=..."</code>). Try 0.1.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </Label>
+                <Input type="number" value={moduleDropout ?? 0} onChange={e=>setModuleDropout(Number(e.target.value))} step={0.01} min={0} max={1} />
+              </div>)}
+              
+
+              {uiMode === 'advanced' && (
+                <CollapsibleSection title="Augmentations & Bucketing" subtitle="Dataset augmentations and resolution buckets for multi-aspect training." summary={augSummary} storageKey="kiko.advanced.aug_bucket" className="col-span-2 p-4 rounded-md border border-zinc-800 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="flex items-center justify-between">
+                      <Label id="flip-symmetry-label" className="flex items-center gap-2">
+                        Horizontal flip
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p>Use for symmetrical characters to augment with mirrored poses.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </Label>
+                      <Switch id="flip-symmetry" ariaLabelledby="flip-symmetry-label" checked={!!flipSymmetry} onCheckedChange={setFlipSymmetry} />
+                    </div>
+                    <div>
+                      <Label className="flex items-center gap-2">LoRA Dropout
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p>Optional regularization (e.g., 0.1) to reduce overfitting; useful with larger datasets (&gt;100 images).</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </Label>
+                      <Input type="number" value={loraDropout ?? 0} onChange={e=>setLoraDropout(Number(e.target.value))} step={0.01} min={0} max={1} />
+                    </div>
+                    <div className="col-span-2 mt-2 p-3 rounded-md border border-zinc-800">
+                      <div className="flex items-center justify-between">
+                        <Label id="enable-bucket-label" className="flex items-center gap-2">
+                          Aspect ratio bucketing
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p>Enable multiple aspect ratio buckets. For Flux LoRA, a step of 32 is recommended.</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </Label>
+                        <Switch id="enable-bucket" ariaLabelledby="enable-bucket-label" checked={!!enableBucket} onCheckedChange={setEnableBucket} />
+                      </div>
+                      {enableBucket && (
+                        <div className="grid grid-cols-2 gap-3 mt-3">
+                          <div>
+                            <Label className="flex items-center gap-2">Bucket step</Label>
+                            <Input type="number" min={32} step={32} value={bucketResoSteps} onChange={e=>setBucketResoSteps(Number(e.target.value))} onBlur={e=>setBucketResoSteps(sanitizeBucketStep(Number(e.currentTarget.value)))} />
+                            <p className="text-xs text-gray-400 mt-1">Flux LoRA requires divisible by 64.</p>
+                          </div>
+                          <div>
+                            <Label className="flex items-center gap-2">No upscale</Label>
+                            <div className="flex justify-between items-center">
+                              <span className="text-xs text-gray-400">Avoid enlarging small images</span>
+                              <Switch id="bucket-no-upscale" checked={!!bucketNoUpscale} onCheckedChange={setBucketNoUpscale} />
+                            </div>
+                          </div>
+                          <div>
+                            <Label className="flex items-center gap-2">Min bucket resolution</Label>
+                            <Input type="number" min={64} step={1} value={minBucketReso} onChange={e=>setMinBucketReso(Number(e.target.value))} />
+                          </div>
+                          <div>
+                            <Label className="flex items-center gap-2">Max bucket resolution</Label>
+                            <Input type="number" min={128} step={1} value={maxBucketReso} onChange={e=>setMaxBucketReso(Number(e.target.value))} />
+                          </div>
+                          <div className="col-span-2">
+                            <Label className="flex items-center gap-2">Resize interpolation</Label>
+                            <Select value={resizeInterpolation || ''} onChange={e=>setResizeInterpolation(e.target.value || undefined)} options={[
+                              {value:'', label:'Default (area downscale, lanczos upscale)'},
+                              {value:'lanczos', label:'lanczos'},
+                              {value:'nearest', label:'nearest'},
+                              {value:'bilinear', label:'bilinear'},
+                              {value:'linear', label:'linear'},
+                              {value:'bicubic', label:'bicubic'},
+                              {value:'cubic', label:'cubic'},
+                              {value:'area', label:'area'},
+                            ]} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </CollapsibleSection>
+              )}
+
+              
+              <CollapsibleSection title="Reproducibility & Compute" summary={`seed ${seed}, workers ${workers}`} storageKey="kiko.advanced.repro" className="col-span-2 p-4 rounded-md border border-zinc-800 space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+<div>
                 <Label className="flex items-center gap-2">
                   Seed
                   <Tooltip>
@@ -677,177 +1021,72 @@
                 </Label>
                 <Input type="number" value={workers} onChange={e=>setWorkers(Number(e.target.value))} />
               </div>
+                </div>
+              </CollapsibleSection>
             </div>
           </CardContent>
         </Card>
 
+
         <div className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                Sample Generation (Optional)
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpCircle className="w-4 h-4 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p>Generate sample images during training to monitor progress. Samples will be saved to track how well the model is learning your style.</p>
-                  </TooltipContent>
-                </Tooltip>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <Label htmlFor="prompts" className="flex items-center gap-2">
-                  Sample Prompts (one per line)
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">
-                      <p>Test prompts to generate images during training. Use [trigger] as placeholder. Example: "[trigger] riding a bike". Helps monitor training progress.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </Label>
-                <Textarea id="prompts" value={samples} onChange={e=>setSamples(e.target.value)} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+
+          
+          
+          {uiMode === 'advanced' && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">Sampling & Monitoring</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div>
-                  <Label className="flex items-center gap-2">
-                    Generate Samples Every N Steps
+                  <Label htmlFor="prompts" className="flex items-center gap-2">
+                    Sample Prompts (one per line)
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs">
-                        <p>How often to generate test images. 0 = disabled. 500-1000 = generate samples every 500-1000 training steps to see progress.</p>
+                        <p>Test prompts to generate images during training. Use [trigger] as placeholder. Example: "[trigger] riding a bike". Helps monitor training progress.</p>
                       </TooltipContent>
                     </Tooltip>
                   </Label>
-                  <Input type="number" value={sampleEvery} onChange={e=>setSampleEvery(Number(e.target.value))} />
-                  <p className="text-xs text-gray-400">{sampleEvery === 0 ? 'Disabled' : 'Enabled'}</p>
+                  <Textarea id="prompts" value={samples} onChange={e=>setSamples(e.target.value)} />
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                Configuration Summary
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpCircle className="w-4 h-4 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p>Review your training configuration before starting. You can export the script and dataset configuration for manual execution or modification.</p>
-                  </TooltipContent>
-                </Tooltip>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="text-sm space-y-4">
-              {/* Show inherited values from Setup page */}
-              {(loraName || classTokens || datasetFolder) && (
-                <>
-                  <div className="p-3 rounded-md bg-muted/50 space-y-1">
-                    <p className="text-xs uppercase tracking-wider opacity-50 mb-2">From Setup</p>
-                    {loraName && <p><span className="opacity-60">LoRA Name:</span> {loraName}</p>}
-                    {classTokens && <p><span className="opacity-60">Trigger:</span> {classTokens}</p>}
-                    {datasetFolder && <p className="text-xs"><span className="opacity-60">Dataset:</span> {datasetFolder}</p>}
-                  </div>
-                  <Separator className="my-3" />
-                </>
-              )}
-              
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                <p><span className="opacity-60">Base Model:</span> {baseModel}</p>
-                <p><span className="opacity-60">VRAM:</span> {vram}</p>
-                <p><span className="opacity-60">Learning Rate:</span> {lr}</p>
-                <p><span className="opacity-60">Network Dim:</span> {dim}</p>
-                <p><span className="opacity-60">Epochs:</span> {epochs}</p>
-                <p><span className="opacity-60">Batch Size:</span> {batch}</p>
-                <p><span className="opacity-60">Resolution:</span> {res}×{res}</p>
-                <p><span className="opacity-60">Repeats:</span> {numRepeats}</p>
-                <p><span className="opacity-60">Timestep:</span> {timestep}</p>
-                <p><span className="opacity-60">Guidance:</span> {guidance}</p>
-                <p><span className="opacity-60">Estimated ckpts:</span> {Math.floor(epochs/(saveEvery||1))}</p>
-                <p><span className="opacity-60">Sample Every:</span> {sampleEvery === 0 ? 'Disabled' : `${sampleEvery} steps`}</p>
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col gap-2">
-              <Button className="w-full" onClick={() => setOpenScript(true)}><FileText className="mr-2" size={16}/>View Training Script</Button>
-              <Button className="w-full" variant="outline" onClick={() => setOpenDataset(true)}><FileJson className="mr-2" size={16}/>View Dataset Config</Button>
-              <Button className="w-full" variant="destructive" disabled={isTraining} onClick={startTraining}>
-                <Play className="mr-2" size={16}/>{isTraining ? 'Training…' : 'Start Training'}
-              </Button>
-              <Button className="w-full" variant="outline" onClick={exportTraining}><FileJson className="mr-2" size={16}/>Export Training (JSON)</Button>
-            </CardFooter>
-          </Card>
-        </div>
-
-        {/* Terminal-like logs viewer */}
-        {(isTraining || termLogs) && (
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <span>Training Output{runId ? ` — ${runId}` : ''}</span>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={()=>setTermLogs('')}>Clear</Button>
-                  <Button size="sm" variant="outline" onClick={stopTraining} disabled={!isTraining}>Stop</Button>
-                </div>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {/* Resume hint if a server run is active but not attached */}
-              {!isTraining && !runId && serverActiveRun && (
-                <div className="mb-3 p-2 rounded border bg-amber-900/20 text-xs flex items-center justify-between">
+                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    Active training session detected on server.
-                    <span className="opacity-70"> ID:</span> <span className="font-mono">{serverActiveRun.run_id}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => {
-                      const rid = serverActiveRun.run_id
-                      setRunId(rid)
-                      setIsTraining(true)
-                      pollLogs(rid)
-                      pollMetrics()
-                      try { localStorage.setItem('active_run_id', rid) } catch {}
-                      setServerActiveRun(null)
-                    }}>Resume</Button>
+                    <Label className="flex items-center gap-2">
+                      Generate Samples Every N Steps
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>How often to generate test images. 0 = disabled. 500-1000 = generate samples every 500-1000 training steps to see progress.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Input type="number" value={sampleEvery} onChange={e=>setSampleEvery(Number(e.target.value))} />
+                    <p className="text-xs text-gray-400">{sampleEvery === 0 ? 'Disabled' : 'Enabled'}</p>
                   </div>
                 </div>
-              )}
-              {metrics && (
-                <div className="mb-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                  <div className="p-2 rounded border bg-muted/40">
-                    <div className="opacity-60">CPU</div>
-                    <div>{metrics.cpu?.percent != null ? `${metrics.cpu.percent.toFixed(0)}%` : 'n/a'}</div>
-                  </div>
-                  <div className="p-2 rounded border bg-muted/40">
-                    <div className="opacity-60">Memory</div>
-                    <div>
-                      {metrics.memory ? `${(metrics.memory.used/ (1024**3)).toFixed(1)} / ${(metrics.memory.total/ (1024**3)).toFixed(1)} GB (${metrics.memory.percent?.toFixed?.(0) || 'n/a'}%)` : 'n/a'}
-                    </div>
-                  </div>
-                  {(metrics.gpus || []).map((g: any) => (
-                    <div key={g.index} className="p-2 rounded border bg-muted/40">
-                      <div className="opacity-60">GPU{g.index} {g.name}</div>
-                      <div className="flex justify-between">
-                        <span>{g.util?.toFixed?.(0) || 0}%</span>
-                        <span>{(g.mem_used/1024).toFixed(1)} / {(g.mem_total/1024).toFixed(1)} GB</span>
-                        <span>{g.temp?.toFixed?.(0) || 0}°C</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <pre className="w-full text-xs bg-black/60 text-green-200 p-3 rounded-md border max-h-[50vh] overflow-auto whitespace-pre-wrap">
-{termLogs}
-              </pre>
-            </CardContent>
-          </Card>
-        )}
+              </CardContent>
+              <CardFooter className="flex flex-col gap-2">
+                <Button variant="outline" onClick={() => setOpenScript(true)} className="w-full">
+                  <FileText className="w-4 h-4 mr-2" /> View Script
+                </Button>
+                <Button variant="outline" onClick={() => setOpenDataset(true)} className="w-full">
+                  <FileJson className="w-4 h-4 mr-2" /> View Dataset
+                </Button>
+                <Button variant="outline" onClick={exportTraining} className="w-full">Export Config</Button>
+                <Button onClick={startTraining} disabled={isTraining} className="w-full">
+                  <Play className="w-4 h-4 mr-2" /> {isTraining ? 'Training…' : 'Start Training'}
+                </Button>
+              </CardFooter>
+            </Card>
+          )}
+
+          {/* Bottom dock rendered outside the grid below */}
+
 
         <Dialog open={openScript} onOpenChange={setOpenScript} title="Training Script (run.sh)">
           <pre className="text-xs overflow-auto p-4 bg-black/40 rounded-lg border whitespace-pre font-mono">
@@ -861,6 +1100,59 @@
           </pre>
         </Dialog>
       </div>
-      </TooltipProvider>
-    )
-  }
+      </div>
+      {/* Bottom Dock: Training Output */}
+      <div
+        className={`fixed z-50 left-0 right-0 bottom-0 ${consoleOpen ? '' : ''}`}
+        style={consoleOpen ? { height: consoleHeight, bottom: 0 } : { height: 44, bottom: 8 }}
+      >
+        {/* Drag handle */}
+        {consoleOpen && (
+          <div
+            className="h-2 cursor-row-resize bg-zinc-800/80"
+            onMouseDown={() => { resizeRef.current = true }}
+            title="Drag to resize"
+          />
+        )}
+        <div className="h-full bg-black/90 border-t border-zinc-800 backdrop-blur flex flex-col">
+          <div className="flex items-center justify-between px-3 py-2 text-sm border-b border-zinc-800">
+            <div className="flex items-center gap-3">
+              <span className="font-medium">Training Output{runId ? ` — ${runId}` : ''}</span>
+              {metrics && (
+                <div className="hidden md:flex items-center gap-2 text-xs text-zinc-300">
+                  <span>CPU {metrics.cpu?.percent?.toFixed?.(0) || '0'}%</span>
+                  <span className="opacity-50">•</span>
+                  <span>Mem {metrics.memory ? `${(metrics.memory.used/ (1024**3)).toFixed(1)}/${(metrics.memory.total/(1024**3)).toFixed(1)} GB` : 'n/a'}</span>
+                  {(metrics.gpus || []).map((g: any) => (
+                    <span key={g.index} className="ml-2">GPU{g.index} {g.util?.toFixed?.(0) || 0}% { (g.mem_used && g.mem_total) ? `(${(g.mem_used/1024).toFixed(1)}/${(g.mem_total/1024).toFixed(1)} GB)` : ''}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {!isTraining && serverActiveRun && (
+                <Button size="sm" onClick={() => {
+                  const rid = serverActiveRun.run_id
+                  setRunId(rid)
+                  setIsTraining(true)
+                  pollLogs(rid)
+                  pollMetrics()
+                  try { localStorage.setItem('active_run_id', rid) } catch {}
+                  setServerActiveRun(null)
+                }}>Resume</Button>
+              )}
+              <Button size="sm" variant="outline" onClick={()=>setTermLogs('')}>Clear</Button>
+              <Button size="sm" variant="outline" onClick={stopTraining} disabled={!isTraining}>Stop</Button>
+              <Button size="sm" variant="outline" onClick={()=>setConsoleOpen(!consoleOpen)}>{consoleOpen ? 'Minimize' : 'Show'}</Button>
+            </div>
+          </div>
+          {consoleOpen && (
+            <div className="flex-1 overflow-hidden flex">
+              <pre className="w-full text-xs bg-black text-green-200 p-3 whitespace-pre-wrap overflow-auto">{termLogs}</pre>
+            </div>
+          )}
+        </div>
+      </div>
+    </TooltipProvider>
+  )
+}

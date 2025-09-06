@@ -92,6 +92,7 @@ def gen_sh(
     workers,
     learning_rate,
     network_dim,
+    network_alpha: float | None,
     max_train_epochs,
     save_every_n_epochs,
     timestep_sampling,
@@ -100,6 +101,13 @@ def gen_sh(
     sample_prompts,
     sample_every_n_steps,
     advanced_flags=None,
+    lr_scheduler: str | None = None,
+    lr_warmup_steps: float | int | None = None,
+    noise_offset: float | None = None,
+    network_dropout: float | None = None,
+    rank_dropout: float | None = None,
+    module_dropout: float | None = None,
+    pretrained_override: str | None = None,
 ):
     output_dir = resolve_path(f"outputs/{output_name}")
     sample_prompts_path = resolve_path(f"outputs/{output_name}/sample_prompts.txt")
@@ -107,35 +115,51 @@ def gen_sh(
     line_break = "\\" if os.name != 'nt' else "^"
     file_type = "sh" if os.name != 'nt' else "bat"
 
-    sample = ""
+    sample_flags = []
     if sample_prompts and sample_every_n_steps and int(sample_every_n_steps) > 0:
-        sample = f"--sample_prompts={sample_prompts_path} --sample_every_n_steps=\"{sample_every_n_steps}\" {line_break}"
+        sample_flags.append(f"--sample_prompts {sample_prompts_path}")
+        sample_flags.append(f"--sample_every_n_steps {sample_every_n_steps}")
 
+    optimizer_flags = []
     if vram == "16G":
-        optimizer = f"""--optimizer_type adafactor {line_break}
-  --optimizer_args \"relative_step=False\" \"scale_parameter=False\" \"warmup_init=False\" {line_break}
-  --lr_scheduler constant_with_warmup {line_break}
-  --max_grad_norm 0.0 {line_break}"""
+        optimizer_flags = [
+            "--optimizer_type adafactor",
+            "--optimizer_args \"relative_step=False\" \"scale_parameter=False\" \"warmup_init=False\"",
+            f"--lr_scheduler {lr_scheduler or 'constant_with_warmup'}",
+            "--max_grad_norm 0.0",
+        ]
     elif vram == "12G":
-        optimizer = f"""--optimizer_type adafactor {line_break}
-  --optimizer_args \"relative_step=False\" \"scale_parameter=False\" \"warmup_init=False\" {line_break}
-  --split_mode {line_break}
-  --network_args \"train_blocks=single\" {line_break}
-  --lr_scheduler constant_with_warmup {line_break}
-  --max_grad_norm 0.0 {line_break}"""
+        optimizer_flags = [
+            "--optimizer_type adafactor",
+            "--optimizer_args \"relative_step=False\" \"scale_parameter=False\" \"warmup_init=False\"",
+            "--split_mode",
+            "--network_args \"train_blocks=single\"",
+            f"--lr_scheduler {lr_scheduler or 'constant_with_warmup'}",
+            "--max_grad_norm 0.0",
+        ]
     else:
-        optimizer = f"--optimizer_type adamw8bit {line_break}"
+        optimizer_flags = ["--optimizer_type adamw8bit"]
 
-    models = load_models_yaml()
-    model_config = models[base_model]
-    model_file = model_config["file"]
-    repo = model_config["repo"]
-    if base_model in ("flux-dev", "flux-schnell"):
-        model_folder = os.path.join(BASE_MODELS_DIR, "unet")
-    else:
-        model_folder = os.path.join(BASE_MODELS_DIR, f"unet/{repo}")
-    model_path = os.path.join(model_folder, model_file)
-    pretrained_model_path = resolve_path(os.path.relpath(model_path, ROOT))
+    # Resolve pretrained UNet path purely from user-provided selection; avoid models.yaml
+    def _resolve_pretrained(pth: str | None) -> str:
+        if not pth and isinstance(base_model, str):
+            pth = base_model
+        if pth:
+            # absolute or relative to ROOT
+            abs_path = pth if os.path.isabs(pth) else os.path.normpath(os.path.join(ROOT, pth))
+            if os.path.exists(abs_path):
+                return resolve_path(os.path.relpath(abs_path, ROOT))
+        # Try to find by name under BASE_MODELS_DIR recursively
+        if isinstance(base_model, str):
+            target = base_model.lower()
+            for dirpath, _, filenames in os.walk(BASE_MODELS_DIR):
+                for fn in filenames:
+                    if target in fn.lower():
+                        cand = os.path.join(dirpath, fn)
+                        return resolve_path(os.path.relpath(cand, ROOT))
+        raise ValueError("Pretrained model path not provided or not found. Select a local model in the UI.")
+
+    pretrained_model_path = _resolve_pretrained(pretrained_override)
 
     # Resolve component paths with fallbacks (nested subfolders vs top-level files)
     def _first_existing(paths):
@@ -161,42 +185,62 @@ def gen_sh(
     t5_path = resolve_path(os.path.relpath(t5_abs, ROOT))
     ae_path = resolve_path(os.path.relpath(ae_abs, ROOT))
 
-    sh = f"""accelerate launch {line_break}
-  --mixed_precision bf16 {line_break}
-  --num_cpu_threads_per_process 1 {line_break}
-  sd-scripts/flux_train_network.py {line_break}
-  --pretrained_model_name_or_path {pretrained_model_path} {line_break}
-  --clip_l {clip_path} {line_break}
-  --t5xxl {t5_path} {line_break}
-  --ae {ae_path} {line_break}
-  --cache_latents_to_disk {line_break}
-  --save_model_as safetensors {line_break}
-  --sdpa --persistent_data_loader_workers {line_break}
-  --max_data_loader_n_workers {workers} {line_break}
-  --seed {seed} {line_break}
-  --gradient_checkpointing {line_break}
-  --mixed_precision bf16 {line_break}
-  --save_precision bf16 {line_break}
-  --network_module networks.lora_flux {line_break}
-  --network_dim {network_dim} {line_break}
-  {optimizer}{sample}
-  --learning_rate {learning_rate} {line_break}
-  --cache_text_encoder_outputs {line_break}
-  --cache_text_encoder_outputs_to_disk {line_break}
-  --fp8_base {line_break}
-  --highvram {line_break}
-  --max_train_epochs {max_train_epochs} {line_break}
-  --save_every_n_epochs {save_every_n_epochs} {line_break}
-  --dataset_config {resolve_path(f"outputs/{output_name}/dataset.toml")} {line_break}
-  --output_dir {output_dir} {line_break}
-  --output_name {output_name} {line_break}
-  --timestep_sampling {timestep_sampling} {line_break}
-  --discrete_flow_shift 3.1582 {line_break}
-  --model_prediction_type raw {line_break}
-  --guidance_scale {guidance_scale} {line_break}
-  --loss_type l2 {line_break}"""
+    # Build argument list and join with proper continuations
+    args: list[str] = []
+    args.append("accelerate launch")
+    args.append("--mixed_precision bf16")
+    args.append("--num_cpu_threads_per_process 1")
+    args.append("sd-scripts/flux_train_network.py")
+    args.append(f"--pretrained_model_name_or_path {pretrained_model_path}")
+    args.append(f"--clip_l {clip_path}")
+    args.append(f"--t5xxl {t5_path}")
+    args.append(f"--ae {ae_path}")
+    args.append("--cache_latents_to_disk")
+    args.append("--save_model_as safetensors")
+    args.append("--sdpa")
+    args.append("--persistent_data_loader_workers")
+    args.append(f"--max_data_loader_n_workers {workers}")
+    args.append(f"--seed {seed}")
+    args.append("--gradient_checkpointing")
+    args.append("--mixed_precision bf16")
+    args.append("--save_precision bf16")
+    args.append("--network_module networks.lora_flux")
+    args.append(f"--network_dim {network_dim}")
+    if network_alpha is not None:
+        args.append(f"--network_alpha {network_alpha}")
+    args.extend(optimizer_flags)
+    args.extend(sample_flags)
+    args.append(f"--learning_rate {learning_rate}")
+    if lr_scheduler and vram not in ("12G", "16G"):
+        args.append(f"--lr_scheduler {lr_scheduler}")
+    if lr_warmup_steps is not None:
+        args.append(f"--lr_warmup_steps {lr_warmup_steps}")
+    args.append("--cache_text_encoder_outputs")
+    args.append("--cache_text_encoder_outputs_to_disk")
+    args.append("--fp8_base")
+    args.append("--highvram")
+    args.append(f"--max_train_epochs {max_train_epochs}")
+    args.append(f"--save_every_n_epochs {save_every_n_epochs}")
+    args.append(f"--dataset_config {resolve_path(f'outputs/{output_name}/dataset.toml')}")
+    args.append(f"--output_dir {output_dir}")
+    args.append(f"--output_name {output_name}")
+    args.append(f"--timestep_sampling {timestep_sampling}")
+    args.append("--discrete_flow_shift 3.1582")
+    args.append("--model_prediction_type raw")
+    args.append(f"--guidance_scale {guidance_scale}")
+    args.append("--loss_type l2")
+    if noise_offset is not None:
+        args.append(f"--noise_offset {noise_offset}")
+    if network_dropout is not None:
+        args.append(f"--network_dropout {network_dropout}")
+    if rank_dropout is not None:
+        args.append(f"--network_args \"rank_dropout={rank_dropout}\"")
+    if module_dropout is not None:
+        args.append(f"--network_args \"module_dropout={module_dropout}\"")
 
-    # Remove trailing line continuation to avoid passing a stray '\\' arg
+    sh = " \\\n  ".join(args) + "\n"
+
+    # Final cleanup: ensure no trailing continuation dangling at EOF
     sh = sh.rstrip()
     if sh.endswith(line_break):
         sh = sh[: -len(line_break)]
@@ -208,22 +252,53 @@ def gen_sh(
     return sh
 
 
-def gen_toml(dataset_folder, resolution, class_tokens, num_repeats, train_batch_size: int = 1):
-    return f"""[general]
-shuffle_caption = false
-caption_extension = '.txt'
-keep_tokens = 1
 
-[[datasets]]
-resolution = {resolution}
-batch_size = {train_batch_size}
-keep_tokens = 1
+def gen_toml(
+    dataset_folder,
+    resolution,
+    class_tokens,
+    num_repeats,
+    train_batch_size: int = 1,
+    flip_aug: bool = False,
+    enable_bucket: bool | None = True,
+    min_bucket_reso: int | None = 256,
+    max_bucket_reso: int | None = 1024,
+    bucket_reso_steps: int | None = 64,
+    bucket_no_upscale: bool | None = False,
+    resize_interpolation: str | None = None,
+):
+    lines: list[str] = []
+    lines.append('[general]')
+    lines.append('shuffle_caption = false')
+    lines.append("caption_extension = '.txt'")
+    lines.append('keep_tokens = 1')
 
-[[datasets.subsets]]
-image_dir = '{resolve_path_without_quotes(dataset_folder)}'
-class_tokens = '{class_tokens}'
-num_repeats = {num_repeats}
-"""
+    lines.append('')
+    lines.append('[[datasets]]')
+    lines.append(f'resolution = {resolution}')
+    lines.append(f'batch_size = {train_batch_size}')
+    lines.append('keep_tokens = 1')
+    if enable_bucket:
+        lines.append('enable_bucket = true')
+        if min_bucket_reso is not None:
+            lines.append(f'min_bucket_reso = {int(min_bucket_reso)}')
+        if max_bucket_reso is not None:
+            lines.append(f'max_bucket_reso = {int(max_bucket_reso)}')
+        if bucket_reso_steps is not None:
+            lines.append(f'bucket_reso_steps = {int(bucket_reso_steps)}')
+        if bucket_no_upscale:
+            lines.append('bucket_no_upscale = true')
+    if resize_interpolation:
+        lines.append(f"resize_interpolation = '{resize_interpolation}'")
+
+    lines.append('')
+    lines.append('[[datasets.subsets]]')
+    lines.append(f"image_dir = '{resolve_path_without_quotes(dataset_folder)}'")
+    lines.append(f"class_tokens = '{class_tokens}'")
+    lines.append(f'num_repeats = {num_repeats}')
+    lines.append(f'flip_aug = {str(bool(flip_aug)).lower()}')
+
+    return '\n'.join(lines) + '\n'
 
 
 def get_loras():
