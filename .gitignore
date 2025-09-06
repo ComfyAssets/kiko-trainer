@@ -1,0 +1,16 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Local tooling
+.playwright-mcp/
+.claude/
+
+# Runtime data
+datasets/
+outputs/
+venv/
+
+# Logs
+server.log
