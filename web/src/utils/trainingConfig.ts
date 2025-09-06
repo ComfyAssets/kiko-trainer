@@ -19,6 +19,13 @@ interface TrainingConfig {
   trainBatchSize: number
   advancedFlags?: string[]
   datasetFolder: string
+  // Bucketing
+  enableBucket?: boolean
+  bucketResoSteps?: number
+  minBucketReso?: number
+  maxBucketReso?: number
+  bucketNoUpscale?: boolean
+  resizeInterpolation?: string | undefined
 }
 
 export function generateTrainingScript(config: TrainingConfig): string {
@@ -105,21 +112,33 @@ export function generateTrainingScript(config: TrainingConfig): string {
 }
 
 export function generateDatasetToml(config: TrainingConfig): string {
-  return `[general]
-shuffle_caption = false
-caption_extension = '.txt'
-keep_tokens = 1
+  const lines: string[] = []
+  lines.push(`[general]`)
+  lines.push('shuffle_caption = false')
+  lines.push("caption_extension = '.txt'")
+  lines.push('keep_tokens = 1')
 
-[[datasets]]
-resolution = ${config.resolution}
-batch_size = ${config.trainBatchSize}
-keep_tokens = 1
-
-[[datasets.subsets]]
-image_dir = '${config.datasetFolder}'
-class_tokens = '${config.classTokens}'
-num_repeats = ${config.numRepeats}
-`
+  lines.push('')
+  lines.push('[[datasets]]')
+  lines.push(`resolution = ${config.resolution}`)
+  lines.push(`batch_size = ${config.trainBatchSize}`)
+  lines.push(`keep_tokens = 1`)
+  if (config.enableBucket) {
+    lines.push(`enable_bucket = true`)
+    if (config.minBucketReso != null) lines.push(`min_bucket_reso = ${config.minBucketReso}`)
+    if (config.maxBucketReso != null) lines.push(`max_bucket_reso = ${config.maxBucketReso}`)
+    if (config.bucketResoSteps != null) lines.push(`bucket_reso_steps = ${config.bucketResoSteps}`)
+    if (config.bucketNoUpscale) lines.push(`bucket_no_upscale = true`)
+  }
+  if (config.resizeInterpolation) {
+    lines.push(`resize_interpolation = '${config.resizeInterpolation}'`)
+  }
+  lines.push('')
+  lines.push('[[datasets.subsets]]')
+  lines.push(`image_dir = '${config.datasetFolder}'`)
+  lines.push(`class_tokens = '${config.classTokens}'`)
+  lines.push(`num_repeats = ${config.numRepeats}`)
+  return lines.join('\n') + '\n'
 }
 
 export function generateSamplePrompts(prompts: string): string {
