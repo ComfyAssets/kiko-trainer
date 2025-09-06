@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '../store/useStore';
 import { InfoTooltip } from './InfoTooltip';
+import { Switch } from './ui/switch';
 
 // Utility: compact number formatting
 const nf = new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 });
@@ -184,28 +185,44 @@ export const EnhancedTrainingConfig: React.FC = () => {
             </p>
           </div>
 
-          {/* Network Dimension (Rank) */}
-          <div className="space-y-2">
-            <FieldLabel
-              label="Network Dimension (Rank)"
-              tooltip={
-                <div>
-                  <p className="font-semibold">Defines LoRA capacity</p>
-                  <p className="mt-1 text-gray-300">Higher rank captures more detail but uses more VRAM and may overfit. Typical range: 32–128.</p>
-                </div>
-              }
-            />
-            <select
-              value={config.networkDim}
-              onChange={(e) => updateConfig('networkDim', parseInt(e.target.value))}
-              className="input-field"
-            >
-              {RANK_OPTIONS.map((rank) => (
-                <option key={rank} value={rank}>
-                  {rank}
-                </option>
-              ))}
-            </select>
+          {/* Rank & Alpha (paired) */}
+          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <FieldLabel
+                label="Network Dimension (Rank)"
+                tooltip={
+                  <div>
+                    <p className="font-semibold">Defines LoRA capacity</p>
+                    <p className="mt-1 text-gray-300">Higher rank captures more detail but uses more VRAM and may overfit. Typical range: 32–128.</p>
+                  </div>
+                }
+              />
+              <select
+                value={config.networkDim}
+                onChange={(e) => updateConfig('networkDim', parseInt(e.target.value))}
+                className="input-field"
+              >
+                {RANK_OPTIONS.map((rank) => (
+                  <option key={rank} value={rank}>
+                    {rank}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <FieldLabel
+                label="Network Alpha"
+                tooltip={<div>LoRA alpha scaling. Common choices: same as rank or half the rank. Default is 1 if unset.</div>}
+              />
+              <input
+                type="number"
+                value={config.networkAlpha ?? 0}
+                onChange={(e) => updateConfig('networkAlpha', Number(e.target.value))}
+                className="input-field"
+                min={0}
+                step={0.1}
+              />
+            </div>
           </div>
 
           {/* Max Epochs */}
@@ -364,6 +381,137 @@ export const EnhancedTrainingConfig: React.FC = () => {
             <p className="text-xs text-gray-500 dark:text-gray-400">
               Current: <span className="font-mono">{nf.format(config.guidanceScale)}</span>
             </p>
+          </div>
+
+          {/* LR Scheduler */}
+          <div className="space-y-2">
+            <FieldLabel
+              label="LR Scheduler"
+              tooltip={<div>Select how learning rate evolves over time. Cosine with warmup refines late training; constant keeps LR fixed.</div>}
+            />
+            <select
+              value={config.lrScheduler || 'cosine'}
+              onChange={(e) => updateConfig('lrScheduler', e.target.value)}
+              className="input-field"
+            >
+              {[
+                'constant',
+                'constant_with_warmup',
+                'linear',
+                'cosine',
+                'cosine_with_restarts',
+                'polynomial',
+                'inverse_sqrt',
+                'cosine_with_min_lr',
+                'warmup_stable_decay',
+                'piecewise_constant',
+                'adafactor',
+              ].map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Warmup Steps or Ratio */}
+          <div className="space-y-2">
+            <FieldLabel
+              label="Warmup (steps or ratio < 1)"
+              tooltip={<div>Provide integer steps or a ratio like 0.05 for 5% of total steps.</div>}
+            />
+            <input
+              type="number"
+              value={config.lrWarmupSteps ?? 0}
+              onChange={(e) => updateConfig('lrWarmupSteps', Number(e.target.value))}
+              className="input-field"
+              step={0.01}
+              min={0}
+            />
+          </div>
+
+          {/* Noise Offset */}
+          <div className="space-y-2">
+            <FieldLabel
+              label="Noise Offset"
+              tooltip={<div>Enable slight noise offset (e.g., 0.05) to help Flux LoRAs generalize and preserve detail.</div>}
+            />
+            <input
+              type="number"
+              value={config.noiseOffset ?? 0}
+              onChange={(e) => updateConfig('noiseOffset', Number(e.target.value))}
+              className="input-field"
+              step={0.01}
+              min={0}
+            />
+          </div>
+
+          {/* Flip Augmentation */}
+          <div className="space-y-2">
+            <FieldLabel
+              label="Horizontal Flip"
+              tooltip={<div>Use for symmetrical characters to augment with mirrored poses.</div>}
+            />
+            <div className="flex items-center justify-between">
+              <label id="flipSymmetry2Label" htmlFor="flipSymmetry2" className="text-sm text-gray-700 dark:text-gray-300">
+                Horizontal flip
+              </label>
+              <Switch
+                id="flipSymmetry2"
+                ariaLabelledby="flipSymmetry2Label"
+                checked={!!config.flipSymmetry}
+                onCheckedChange={(v) => updateConfig('flipSymmetry', v)}
+              />
+            </div>
+          </div>
+
+          {/* LoRA Dropout */}
+          <div className="space-y-2">
+            <FieldLabel
+              label="LoRA Neuron Dropout"
+              tooltip={<div>Neuron-level dropout inside LoRA modules (<code>--network_dropout</code>). For Flux LoRA, consider Rank/Module dropouts below.</div>}
+            />
+            <input
+              type="number"
+              value={config.loraDropout ?? 0}
+              onChange={(e) => updateConfig('loraDropout', Number(e.target.value))}
+              className="input-field"
+              step={0.01}
+              min={0}
+              max={1}
+            />
+          </div>
+
+          {/* Flux LoRA Rank Dropout */}
+          <div className="space-y-2">
+            <FieldLabel
+              label="Rank Dropout (Flux LoRA)"
+              tooltip={<div>Randomly drops LoRA ranks each step (<code>--network_args "rank_dropout=..."</code>). Try 0.1.</div>}
+            />
+            <input
+              type="number"
+              value={config.rankDropout ?? 0}
+              onChange={(e) => updateConfig('rankDropout', Number(e.target.value))}
+              className="input-field"
+              step={0.01}
+              min={0}
+              max={1}
+            />
+          </div>
+
+          {/* Flux LoRA Module Dropout */}
+          <div className="space-y-2">
+            <FieldLabel
+              label="Module Dropout (Flux LoRA)"
+              tooltip={<div>Randomly disables entire LoRA modules (<code>--network_args "module_dropout=..."</code>). Try 0.1.</div>}
+            />
+            <input
+              type="number"
+              value={config.moduleDropout ?? 0}
+              onChange={(e) => updateConfig('moduleDropout', Number(e.target.value))}
+              className="input-field"
+              step={0.01}
+              min={0}
+              max={1}
+            />
           </div>
         </div>
 
