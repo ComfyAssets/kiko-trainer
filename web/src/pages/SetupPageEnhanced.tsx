@@ -43,19 +43,18 @@ export function SetupPageEnhanced() {
   // Debug: log current images count
   if (import.meta.env.DEV) console.log('SetupPageEnhanced render - Current images.length:', images.length);
   
-  const [loraName, setLoraName] = React.useState("");
-  const [trigger, setTrigger] = React.useState("");
-  
-  // Update context when local values change
+  const [loraName, setLoraName] = React.useState(contextLoraName || "");
+  const [trigger, setTrigger] = React.useState(
+    (contextClassTokens ? String(contextClassTokens).replace(/,$/, '') : '')
+  );
+
+  // Keep local inputs in sync if context changes (e.g., after import)
   React.useEffect(() => {
-    setContextLoraName(loraName);
-  }, [loraName, setContextLoraName]);
-  
+    setLoraName(contextLoraName || '')
+  }, [contextLoraName])
   React.useEffect(() => {
-    // Add comma if trigger doesn't end with one
-    const triggerWithComma = trigger && !trigger.endsWith(',') ? `${trigger},` : trigger;
-    setContextClassTokens(triggerWithComma);
-  }, [trigger, setContextClassTokens]);
+    setTrigger(contextClassTokens ? String(contextClassTokens).replace(/,$/, '') : '')
+  }, [contextClassTokens])
   
   React.useEffect(() => {
     // Set a default dataset folder based on lora name (within this repo)
@@ -157,6 +156,22 @@ export function SetupPageEnhanced() {
           if (p.numRepeats != null) updateConfig('numRepeats', Number(p.numRepeats))
           if (p.seed != null) updateConfig('seed', Number(p.seed))
           if (p.workers != null) updateConfig('workers', Number(p.workers))
+          // advanced
+          if (p.lrScheduler) updateConfig('lrScheduler', p.lrScheduler)
+          if (p.lrWarmup != null) updateConfig('lrWarmupSteps', Number(p.lrWarmup))
+          if (p.noiseOffset != null) updateConfig('noiseOffset', Number(p.noiseOffset))
+          if (p.flipSymmetry != null) updateConfig('flipSymmetry', Boolean(p.flipSymmetry))
+          if (p.loraDropout != null) updateConfig('loraDropout', Number(p.loraDropout))
+          if (p.networkAlpha != null) updateConfig('networkAlpha', Number(p.networkAlpha))
+          if (p.rankDropout != null) updateConfig('rankDropout', Number(p.rankDropout))
+          if (p.moduleDropout != null) updateConfig('moduleDropout', Number(p.moduleDropout))
+          // bucketing
+          if (p.enableBucket != null) updateConfig('enableBucket', Boolean(p.enableBucket))
+          if (p.bucketResoSteps != null) updateConfig('bucketResoSteps', Number(p.bucketResoSteps))
+          if (p.minBucketReso != null) updateConfig('minBucketReso', Number(p.minBucketReso))
+          if (p.maxBucketReso != null) updateConfig('maxBucketReso', Number(p.maxBucketReso))
+          if (p.bucketNoUpscale != null) updateConfig('bucketNoUpscale', Boolean(p.bucketNoUpscale))
+          if (p.resizeInterpolation != null) updateConfig('resizeInterpolation', String(p.resizeInterpolation) as any)
         } catch (e) {
           console.warn('Partial training params import failed:', e)
         }
@@ -287,7 +302,12 @@ export function SetupPageEnhanced() {
               <Input
                 id="name"
                 value={loraName}
-                onChange={(e) => setLoraName(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value
+                  setLoraName(v)
+                  setContextLoraName(v)
+                  try { localStorage.setItem('kiko.loraName', v) } catch {}
+                }}
                 autoComplete="off"
                 type="text"
               />
@@ -308,7 +328,13 @@ export function SetupPageEnhanced() {
                 id="trigger"
                 placeholder="e.g., ohwx person"
                 value={trigger}
-                onChange={(e) => setTrigger(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value
+                  setTrigger(v)
+                  const withComma = v && !v.endsWith(',') ? `${v},` : v
+                  setContextClassTokens(withComma)
+                  try { localStorage.setItem('kiko.classTokens', withComma) } catch {}
+                }}
               />
             </div>
           </CardContent>
