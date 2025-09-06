@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: kiko-api
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./models:/app/models
+      - ./outputs:/app/outputs
+    environment:
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.web
+    container_name: kiko-web
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
