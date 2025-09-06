@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
+import { InfoTooltip } from './InfoTooltip';
+import { Switch } from './ui/switch';
 
 export const TrainingConfig: React.FC = () => {
   const { config, updateConfig, models } = useStore();
@@ -113,19 +115,35 @@ export const TrainingConfig: React.FC = () => {
             )}
           </div>
 
-          {/* Network Dimension */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Network Dimension (Rank)
-            </label>
-            <input
-              type="number"
-              value={config.networkDim}
-              onChange={(e) => updateConfig('networkDim', parseInt(e.target.value))}
-              className="input-field"
-              min="1"
-              max="128"
-            />
+          {/* Rank & Alpha (paired) */}
+          <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Network Dimension (Rank)
+              </label>
+              <input
+                type="number"
+                value={config.networkDim}
+                onChange={(e) => updateConfig('networkDim', parseInt(e.target.value))}
+                className="input-field"
+                min="1"
+                max="128"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Network Alpha
+                <InfoTooltip content={<div>LoRA alpha scaling. Often set to same as rank or half of it. Default is 1 if unset.</div>} />
+              </label>
+              <input
+                type="number"
+                value={config.networkAlpha ?? 0}
+                onChange={(e) => updateConfig('networkAlpha', Number(e.target.value))}
+                className="input-field"
+                min="0"
+                step="0.1"
+              />
+            </div>
           </div>
 
           {/* Max Epochs */}
@@ -218,6 +236,128 @@ export const TrainingConfig: React.FC = () => {
               min="0"
               max="20"
               step="0.1"
+            />
+          </div>
+
+          {/* LR Scheduler */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              LR Scheduler <InfoTooltip content={<div>Select how learning rate changes during training. Cosine often refines late training better than constant.</div>} />
+            </label>
+            <select
+              value={config.lrScheduler || 'cosine'}
+              onChange={(e) => updateConfig('lrScheduler', e.target.value)}
+              className="input-field"
+            >
+              {[
+                'constant',
+                'constant_with_warmup',
+                'linear',
+                'cosine',
+                'cosine_with_restarts',
+                'polynomial',
+                'inverse_sqrt',
+                'cosine_with_min_lr',
+                'warmup_stable_decay',
+                'piecewise_constant',
+                'adafactor',
+              ].map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Warmup Steps/Ratio */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Warmup (steps or ratio &lt; 1) <InfoTooltip content={<div>Use integer steps or a ratio like 0.05 for 5% of total steps.</div>} />
+            </label>
+            <input
+              type="number"
+              value={config.lrWarmupSteps ?? 0}
+              onChange={(e) => updateConfig('lrWarmupSteps', Number(e.target.value))}
+              className="input-field"
+              step="0.01"
+              min="0"
+            />
+          </div>
+
+          {/* Noise Offset */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Noise Offset <InfoTooltip content={<div>Enable slight noise offset (e.g., 0.05) to help Flux LoRAs generalize and preserve detail.</div>} />
+            </label>
+            <input
+              type="number"
+              value={config.noiseOffset ?? 0}
+              onChange={(e) => updateConfig('noiseOffset', Number(e.target.value))}
+              className="input-field"
+              step="0.01"
+              min="0"
+            />
+          </div>
+
+          {/* Flip Augmentation */}
+          <div className="flex items-center justify-between mt-2">
+            <label id="flipSymmetryLabel" htmlFor="flipSymmetry" className="text-sm text-gray-700 dark:text-gray-300 flex items-center gap-2">
+              Horizontal flip
+              <InfoTooltip content={<div>Use for symmetrical characters to augment with mirrored poses.</div>} />
+            </label>
+            <Switch
+              id="flipSymmetry"
+              ariaLabelledby="flipSymmetryLabel"
+              checked={!!config.flipSymmetry}
+              onCheckedChange={(v) => updateConfig('flipSymmetry', v)}
+            />
+          </div>
+
+          {/* LoRA Dropout */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              LoRA Neuron Dropout <InfoTooltip content={<div>Optional neuron dropout inside LoRA modules (maps to <code>--network_dropout</code>). For Flux LoRA, prefer Rank/Module dropout below.</div>} />
+            </label>
+            <input
+              type="number"
+              value={config.loraDropout ?? 0}
+              onChange={(e) => updateConfig('loraDropout', Number(e.target.value))}
+              className="input-field"
+              step="0.01"
+              min="0"
+              max="1"
+            />
+          </div>
+
+          {/* Flux LoRA Rank Dropout */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Rank Dropout (Flux LoRA)
+              <InfoTooltip content={<div>Randomly drops LoRA ranks each step (maps to <code>--network_args "rank_dropout=..."</code>). Try 0.1.</div>} />
+            </label>
+            <input
+              type="number"
+              value={config.rankDropout ?? 0}
+              onChange={(e) => updateConfig('rankDropout', Number(e.target.value))}
+              className="input-field"
+              step="0.01"
+              min="0"
+              max="1"
+            />
+          </div>
+
+          {/* Flux LoRA Module Dropout */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Module Dropout (Flux LoRA)
+              <InfoTooltip content={<div>Randomly disables entire LoRA modules (maps to <code>--network_args "module_dropout=..."</code>). Try 0.1.</div>} />
+            </label>
+            <input
+              type="number"
+              value={config.moduleDropout ?? 0}
+              onChange={(e) => updateConfig('moduleDropout', Number(e.target.value))}
+              className="input-field"
+              step="0.01"
+              min="0"
+              max="1"
             />
           </div>
         </div>
