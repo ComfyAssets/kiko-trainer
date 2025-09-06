@@ -62,4 +62,7 @@ body {
   .card {
     @apply bg-card text-card-foreground rounded-lg border p-6;
   }
+  .input-field {
+    @apply w-full h-10 rounded-md bg-muted/70 border px-3 focus-ring text-foreground placeholder:text-gray-400;
+  }
 }
