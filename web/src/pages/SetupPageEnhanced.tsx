@@ -108,6 +108,7 @@ export function SetupPageEnhanced() {
       case 'florence-small': return 'microsoft/Florence-2-base';
       case 'qwen-3b': return 'Qwen/Qwen2.5-VL-3B-Instruct';
       case 'qwen-7b': return 'Qwen/Qwen2.5-VL-7B-Instruct';
+      case 'qwen-relaxed': return 'Ertugrul/Qwen2.5-VL-7B-Captioner-Relaxed';
       case 'qwen-72b': return 'Qwen/Qwen2.5-VL-72B-Instruct';
       default: return 'Qwen/Qwen2.5-VL-7B-Instruct';
     }
@@ -245,6 +246,7 @@ export function SetupPageEnhanced() {
           case 'florence-small': return 'microsoft/Florence-2-base';
           case 'qwen-3b': return 'Qwen/Qwen2.5-VL-3B-Instruct';
           case 'qwen-7b': return 'Qwen/Qwen2.5-VL-7B-Instruct';
+          case 'qwen-relaxed': return 'Ertugrul/Qwen2.5-VL-7B-Captioner-Relaxed';
           case 'qwen-72b': return 'Qwen/Qwen2.5-VL-72B-Instruct';
           default: return 'Qwen/Qwen2.5-VL-7B-Instruct';
         }
@@ -371,6 +373,7 @@ export function SetupPageEnhanced() {
                   { value: "florence-large", label: "Florence-2 Large (Better, 0.7B params)" },
                   { value: "qwen-3b", label: "Qwen2.5-VL 3B (Fast, 8GB+ VRAM)" },
                   { value: "qwen-7b", label: "Qwen2.5-VL 7B (Balanced, 16GB+ VRAM)" },
+                  { value: "qwen-relaxed", label: "Qwen2.5-VL 7B Captioner (Relaxed)" },
                   { value: "qwen-72b", label: "Qwen2.5-VL 72B (Best, 80GB+ VRAM)" },
                 ]}
               />
