@@ -223,8 +223,10 @@ def gen_sh(
     args.append("--cache_text_encoder_outputs")
     args.append("--cache_text_encoder_outputs_to_disk")
     args.append("--fp8_base")
-    # Only enable highvram for unknown/very large VRAM settings; it increases VRAM residency
-    if vram not in ("12G", "16G", "20G", "24G"):
+    # Prefer higher residency on 24G; be conservative elsewhere
+    if vram == "24G":
+        args.append("--highvram")
+    elif vram not in ("12G", "16G", "20G"):
         args.append("--highvram")
     # Reduce VRAM during forward/backward by swapping blocks
     eff_blocks_to_swap: int | None = None
@@ -232,8 +234,8 @@ def gen_sh(
         if blocks_to_swap_override > 0:
             eff_blocks_to_swap = blocks_to_swap_override
     else:
-        if vram in ("20G", "24G"):
-            eff_blocks_to_swap = 18
+        if vram == "20G":
+            eff_blocks_to_swap = 18  # default swap on 20G; leave 24G unswapped by default
     if eff_blocks_to_swap is not None:
         args.append(f"--blocks_to_swap {eff_blocks_to_swap}")
     args.append(f"--max_train_epochs {max_train_epochs}")

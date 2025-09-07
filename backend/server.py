@@ -2126,7 +2126,7 @@ def api_train_prepare(payload: Dict[str, Any]):
         # Cap overly large LoRA rank for given VRAM to avoid OOM
         try:
             vram_norm = str(vram).upper().replace('B','') if isinstance(vram, str) else str(vram)
-            cap_map = {"12G": 32, "16G": 64, "20G": 96, "24G": 128}
+            cap_map = {"12G": 32, "16G": 64, "20G": 96, "24G": 192}
             cap = cap_map.get(vram_norm)
             if cap is not None and network_dim > cap:
                 network_dim = cap
@@ -2139,8 +2139,10 @@ def api_train_prepare(payload: Dict[str, Any]):
             if isinstance(blocks_to_swap, int):
                 eff_blocks_to_swap = blocks_to_swap if blocks_to_swap > 0 else None
             else:
-                if vram_norm in ("20G", "24G"):
-                    eff_blocks_to_swap = 18
+                if vram_norm == "20G":
+                    eff_blocks_to_swap = 18  # default on 20G
+                elif vram_norm == "24G":
+                    eff_blocks_to_swap = None  # default off on 24G to use more VRAM
         except Exception:
             pass
 
