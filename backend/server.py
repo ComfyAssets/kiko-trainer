@@ -143,6 +143,81 @@ app.mount("/static", StaticFiles(directory=MODELS_DIR), name="static")
 # Serve arbitrary project files (used to preview output images)
 app.mount("/files", StaticFiles(directory=ROOT), name="files")
 
+# --- Sample prompt helpers (shared across endpoints) ---
+def _round16(x: int) -> int:
+    try:
+        return max(64, (int(x) // 16) * 16)
+    except Exception:
+        return 512
+
+
+def _max_sample_res_for_vram(v: str) -> Optional[int]:
+    v = str(v or '').upper().replace('B', '')
+    if v.startswith('12'):
+        return 512
+    if v.startswith('16'):
+        return 640
+    if v.startswith('20'):
+        return 768
+    if v.startswith('24'):
+        return 896
+    return None
+
+
+def _cap_width_height_in_toml(src: str, max_res: Optional[int]) -> str:
+    if not max_res:
+        return src
+    out_lines: list[str] = []
+    for ln in src.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+        s = ln.strip()
+        if s.startswith('width') and '=' in s:
+            try:
+                val = int(s.split('=')[1].strip())
+                if val > max_res:
+                    ln = f"width = {_round16(max_res)}"
+            except Exception:
+                pass
+        elif s.startswith('height') and '=' in s:
+            try:
+                val = int(s.split('=')[1].strip())
+                if val > max_res:
+                    ln = f"height = {_round16(max_res)}"
+            except Exception:
+                pass
+        out_lines.append(ln)
+    return '\n'.join(out_lines)
+
+
+def _convert_simple_prompt_toml(src: str) -> str:
+    lines = src.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for ln in lines:
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith('[[prompt]]'):
+            if current:
+                blocks.append(current)
+            current = []
+            continue
+        # collect k = v lines only
+        if '=' in s and not s.startswith('#'):
+            if current is None:
+                current = []
+            current.append(s)
+    if current:
+        blocks.append(current)
+    # Build target TOML
+    out: list[str] = []
+    out.append('[prompt]')
+    for blk in blocks:
+        out.append('')
+        out.append('[[prompt.subset]]')
+        out.extend(blk)
+    out.append('')
+    return '\n'.join(out)
+
 # Global model status tracking
 MODEL_STATUS = {}  # repo_id -> {"status": "downloading|loaded|error", "progress": 0-100, "message": "..."}
 MODEL_CACHE = {}  # repo_id -> (model, processor) - keep loaded models in memory
