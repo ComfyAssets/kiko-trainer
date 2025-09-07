@@ -29,6 +29,7 @@
     const [baseModel, setBaseModel] = React.useState('FLUX.1-dev')
   const [vram, setVram] = React.useState('20GB')
   const [blocksToSwap, setBlocksToSwap] = React.useState<string>('auto') // 'auto' | 'off' | number string
+  const [highVram, setHighVram] = React.useState<boolean>(false)
     const [lr, setLr] = React.useState('8e-4')
     const [dim, setDim] = React.useState(4)
     const [epochs, setEpochs] = React.useState(16)
@@ -340,6 +341,7 @@ const trainingConfig = {
         fd.append('timestep_sampling', String(timestep))
         fd.append('guidance_scale', String(guidance))
         fd.append('vram', String(vram))
+        fd.append('high_vram', String(!!highVram))
         fd.append('sample_prompts', preparedSamples)
         if (sampleSampler) fd.append('sample_sampler', String(sampleSampler))
         fd.append('sample_every_n_steps', String(sampleEvery))
@@ -391,6 +393,7 @@ const trainingConfig = {
           timestep_sampling: timestep,
           guidance_scale: guidance,
           vram,
+          high_vram: !!highVram,
           sample_prompts: preparedSamples,
           sample_every_n_steps: sampleEvery,
           sample_sampler: sampleSampler,
@@ -1081,6 +1084,25 @@ const trainingConfig = {
                   </Tooltip>
                 </Label>
                 <Input type="number" value={workers} onChange={e=>setWorkers(Number(e.target.value))} />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label className="flex items-center gap-2">
+                  High VRAM mode
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p>Forces high VRAM residency (--highvram). Keeps more model state on the GPU to reduce CPU↔GPU transfers and can improve training throughput and stability. Increases peak VRAM and OOM risk. Recommended for 24GB+ GPUs or when you aim for ~20/24GB usage. Combine with Block Swap = Off for maximum VRAM usage.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </Label>
+                <div>
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={highVram} onChange={e=>setHighVram(e.target.checked)} />
+                    <span>Force --highvram</span>
+                  </label>
+                </div>
               </div>
               <div>
                 <Label className="flex items-center gap-2">

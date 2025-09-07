@@ -2091,6 +2091,7 @@ def api_train_prepare(payload: Dict[str, Any]):
         timestep_sampling = str(payload.get("timestep_sampling", "shift"))
         guidance_scale = float(payload.get("guidance_scale", 1.0))
         vram = payload.get("vram", "20G")
+        force_highvram = bool(payload.get("high_vram", False))
         sample_prompts = payload.get("sample_prompts", "")
         sample_every_n_steps = int(payload.get("sample_every_n_steps", 0))
         class_tokens = payload.get("class_tokens", "")
@@ -2309,6 +2310,7 @@ def api_train_prepare(payload: Dict[str, Any]):
             payload.get('sample_sampler'),
             sp_path,
             blocks_to_swap_override=eff_blocks_to_swap,
+            force_highvram=force_highvram,
         )
         dataset_folder = payload.get("dataset_folder") or f"datasets/{output_name}"
         toml_text = tu_gen_toml(
@@ -2386,6 +2388,7 @@ async def api_train_prepare_upload(
     timestep_sampling: str = Form("shift"),
     guidance_scale: float = Form(1.0),
     vram: str = Form("20G"),
+    high_vram: Optional[bool] = Form(False),
     sample_prompts: str = Form(""),
     sample_every_n_steps: int = Form(0),
     sample_sampler: Optional[str] = Form(None),
@@ -2513,6 +2516,7 @@ async def api_train_prepare_upload(
             "timestep_sampling": timestep_sampling,
             "guidance_scale": guidance_scale,
             "vram": vram,
+            "high_vram": bool(high_vram),
             "sample_prompts": sample_prompts,
             "sample_every_n_steps": sample_every_n_steps,
             "class_tokens": class_tokens,

@@ -111,6 +111,7 @@ def gen_sh(
     sample_sampler: str | None = None,
     sample_prompts_path_override: str | None = None,
     blocks_to_swap_override: int | None = None,
+    force_highvram: bool = False,
 ):
     output_dir = resolve_path(f"outputs/{output_name}")
     sample_prompts_path = sample_prompts_path_override or resolve_path(f"outputs/{output_name}/sample_prompts.txt")
@@ -223,10 +224,9 @@ def gen_sh(
     args.append("--cache_text_encoder_outputs")
     args.append("--cache_text_encoder_outputs_to_disk")
     args.append("--fp8_base")
-    # Prefer higher residency on 24G; be conservative elsewhere
-    if vram == "24G":
-        args.append("--highvram")
-    elif vram not in ("12G", "16G", "20G"):
+    # High VRAM mode: force residency if requested; otherwise apply heuristics
+    should_highvram = bool(force_highvram) or (vram == "24G" or vram not in ("12G", "16G", "20G"))
+    if should_highvram:
         args.append("--highvram")
     # Reduce VRAM during forward/backward by swapping blocks
     eff_blocks_to_swap: int | None = None
