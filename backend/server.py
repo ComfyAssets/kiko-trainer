@@ -2028,6 +2028,82 @@ def api_train_prepare(payload: Dict[str, Any]):
         # Decide sample prompts path ext
         sp_ext = 'txt'
         converted_sample_prompts = None
+
+        def _max_sample_res_for_vram(v: str) -> int | None:
+            v = str(v or '').upper().replace('B', '')
+            if v.startswith('12'):
+                return 512
+            if v.startswith('16'):
+                return 640
+            if v.startswith('20'):
+                return 768
+            if v.startswith('24'):
+                return 896
+            return None
+
+        def _round16(x: int) -> int:
+            return max(64, (int(x) // 16) * 16)
+
+        def _cap_width_height_in_toml(src: str, max_res: int | None) -> str:
+            if not max_res:
+                return src
+            out_lines: list[str] = []
+            for ln in src.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+                s = ln.strip()
+                if s.startswith('width') and '=' in s:
+                    try:
+                        val = int(s.split('=')[1].strip())
+                        if val > max_res:
+                            ln = f"width = {_round16(max_res)}"
+                    except Exception:
+                        pass
+                elif s.startswith('height') and '=' in s:
+                    try:
+                        val = int(s.split('=')[1].strip())
+                        if val > max_res:
+                            ln = f"height = {_round16(max_res)}"
+                    except Exception:
+                        pass
+                out_lines.append(ln)
+            return '\n'.join(out_lines)
+
+        def _max_sample_res_for_vram(v: str) -> int | None:
+            v = str(v or '').upper().replace('B', '')
+            if v.startswith('12'):
+                return 512
+            if v.startswith('16'):
+                return 640
+            if v.startswith('20'):
+                return 768
+            if v.startswith('24'):
+                return 896
+            return None
+
+        def _round16(x: int) -> int:
+            return max(64, (int(x) // 16) * 16)
+
+        def _cap_width_height_in_toml(src: str, max_res: int | None) -> str:
+            if not max_res:
+                return src
+            out_lines: list[str] = []
+            for ln in src.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+                s = ln.strip()
+                if s.startswith('width') and '=' in s:
+                    try:
+                        val = int(s.split('=')[1].strip())
+                        if val > max_res:
+                            ln = f"width = {_round16(max_res)}"
+                    except Exception:
+                        pass
+                elif s.startswith('height') and '=' in s:
+                    try:
+                        val = int(s.split('=')[1].strip())
+                        if val > max_res:
+                            ln = f"height = {_round16(max_res)}"
+                    except Exception:
+                        pass
+                out_lines.append(ln)
+            return '\n'.join(out_lines)
         if isinstance(sample_prompts, str):
             sps = sample_prompts.strip()
             if sps.startswith('[[prompt]]'):
@@ -2067,10 +2143,15 @@ def api_train_prepare(payload: Dict[str, Any]):
                     return '\n'.join(out)
 
                 try:
-                    converted_sample_prompts = _convert_simple_prompt_toml(sps)
+                    converted_sample_prompts = _cap_width_height_in_toml(
+                        _convert_simple_prompt_toml(sps), _max_sample_res_for_vram(vram)
+                    )
                 except Exception:
                     # Fall back to original text if conversion fails
-                    converted_sample_prompts = sps
+                    converted_sample_prompts = _cap_width_height_in_toml(sps, _max_sample_res_for_vram(vram))
+            elif sps.startswith('[prompt]') or '[[prompt.subset]]' in sps:
+                sp_ext = 'toml'
+                converted_sample_prompts = _cap_width_height_in_toml(sps, _max_sample_res_for_vram(vram))
             elif sps.startswith('{') or sps.startswith('['):
                 sp_ext = 'json'
         sp_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/sample_prompts.{sp_ext}")
@@ -2270,9 +2351,14 @@ async def api_train_prepare_upload(
                     return '\n'.join(out)
 
                 try:
-                    converted_sample_prompts = _convert_simple_prompt_toml(sps)
+                    converted_sample_prompts = _cap_width_height_in_toml(
+                        _convert_simple_prompt_toml(sps), _max_sample_res_for_vram(vram)
+                    )
                 except Exception:
-                    converted_sample_prompts = sps
+                    converted_sample_prompts = _cap_width_height_in_toml(sps, _max_sample_res_for_vram(vram))
+            elif sps.startswith('[prompt]') or '[[prompt.subset]]' in sps:
+                sp_ext = 'toml'
+                converted_sample_prompts = _cap_width_height_in_toml(sps, _max_sample_res_for_vram(vram))
             elif sps.startswith('{') or sps.startswith('['):
                 sp_ext = 'json'
         sp_path = tu_resolve_path_without_quotes(f"outputs/{lora_name}/sample_prompts.{sp_ext}")
