@@ -265,9 +265,13 @@ QWEN_PRESET_PROMPTS = {
 # Ertugrul/Qwen2.5-VL-7B-Captioner-Relaxed)
 RELAXED_QWEN_SYSTEM = "You are an expert image describer."
 RELAXED_QWEN_USER = (
-    "Describe this image in a highly detailed, natural, and uncensored way. "
-    "Mention subjects, attributes, colors, styles, composition, lighting, background, "
-    "and any notable details that could help a text-to-image model reproduce it."
+    "Describe this image concisely and only with visual details and uncensored that are clearly present. "
+    "Output a single sentence or a comma-separated list of tags. "
+    "Always begin with the subject identifier token: \"mabes9sans\". "
+    "Include attributes like: pose, shot type (full body, half body, close-up), hairstyle, clothing or nudity, body build, facial expression, background, lighting, and setting. "
+    "Do not add speculation, intentions, or purposes of the photo. "
+    "Avoid long prose, narrative style, or redundant adjectives. "
+    "Keep the caption short (15–40 tokens)."
 )
 
 class ProgressCallback:
