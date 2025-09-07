@@ -65,12 +65,26 @@ export default function App() {
                     const freedAlloc = (typeof bA === 'number' && typeof aA === 'number') ? Math.max(0, bA - aA) : null
                     const freedRes = (typeof bR === 'number' && typeof aR === 'number') ? Math.max(0, bR - aR) : null
                     const fmt = (n: number) => `${n.toFixed(3)} GB`
+                    // Prefer device-level delta if available
+                    const gpuFreed = (() => {
+                      try {
+                        const arr = data?.gpu?.freed as any[]
+                        if (Array.isArray(arr) && arr.length > 0) {
+                          const f0 = arr[0]?.freed_gb
+                          if (typeof f0 === 'number') return f0
+                        }
+                      } catch {}
+                      return null
+                    })()
                     let msg = 'VRAM purged'
-                    if (freedAlloc !== null || freedRes !== null) {
-                      const parts: string[] = []
-                      if (freedAlloc !== null) parts.push(`freed ${fmt(freedAlloc)} allocated`)
-                      if (freedRes !== null) parts.push(`freed ${fmt(freedRes)} reserved`)
-                      msg = `VRAM purged: ${parts.join(', ')}`
+                    const parts: string[] = []
+                    if (gpuFreed !== null) parts.push(`global freed ${fmt(gpuFreed)}`)
+                    if (freedAlloc !== null) parts.push(`freed ${fmt(freedAlloc)} allocated`)
+                    if (freedRes !== null) parts.push(`freed ${fmt(freedRes)} reserved`)
+                    if (parts.length > 0) msg = `VRAM purged: ${parts.join(', ')}`
+                    // If nothing changed, hint why
+                    if (parts.length === 0 || (/0\.000/.test(msg))) {
+                      msg = 'VRAM purge: no cached memory to free (active training processes hold allocations)'
                     }
                     toast.success(msg)
                   } else {

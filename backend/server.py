@@ -1463,6 +1463,31 @@ async def api_purge_vram():
         import gc
         before_alloc = None
         before_reserved = None
+        # Best-effort global GPU memory snapshot via nvidia-smi
+        def _gpu_mem_snapshot():
+            try:
+                import subprocess as _sp
+                out = _sp.check_output(
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=memory.total,memory.used",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    text=True,
+                    stderr=_sp.DEVNULL,
+                )
+                vals = []
+                for line in out.strip().splitlines():
+                    parts = [p.strip() for p in line.split(',')]
+                    if len(parts) == 2:
+                        total_mb = float(parts[0])
+                        used_mb = float(parts[1])
+                        vals.append({"total_mb": total_mb, "used_mb": used_mb})
+                return vals
+            except Exception:
+                return []
+
+        gpu_before = _gpu_mem_snapshot()
         if torch.cuda.is_available():
             try:
                 before_alloc = torch.cuda.memory_allocated()
@@ -1498,6 +1523,16 @@ async def api_purge_vram():
                 after_reserved = torch.cuda.memory_reserved()
             except Exception:
                 pass
+        gpu_after = _gpu_mem_snapshot()
+        gpu_freed = []
+        if gpu_before and gpu_after and len(gpu_before) == len(gpu_after):
+            for b, a in zip(gpu_before, gpu_after):
+                freed_mb = max(0.0, (b.get("used_mb", 0.0) - a.get("used_mb", 0.0)))
+                gpu_freed.append({
+                    "freed_gb": round(freed_mb / 1024.0, 3),
+                    "before_used_gb": round(b.get("used_mb", 0.0) / 1024.0, 3),
+                    "after_used_gb": round(a.get("used_mb", 0.0) / 1024.0, 3),
+                })
 
         def fmt(x):
             return None if x is None else round(x / (1024**3), 3)
@@ -1506,6 +1541,7 @@ async def api_purge_vram():
             "ok": True,
             "before": {"allocated_gb": fmt(before_alloc), "reserved_gb": fmt(before_reserved)},
             "after": {"allocated_gb": fmt(after_alloc), "reserved_gb": fmt(after_reserved)},
+            "gpu": {"before": gpu_before, "after": gpu_after, "freed": gpu_freed},
         }
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
