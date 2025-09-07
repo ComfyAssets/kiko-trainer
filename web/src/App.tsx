@@ -8,33 +8,66 @@ import { Cpu, Settings } from 'lucide-react'
 import Icon from '@mdi/react'
 import { mdiBeaker } from '@mdi/js'
 import { useState } from 'react'
+import { useStore } from './store/useStore'
+import { Button } from './components/ui/button'
+import { toast } from 'react-hot-toast'
+import { apiUrl } from './config/api'
 import { TrainingProvider } from './contexts/TrainingContext'
 import { Toaster } from 'react-hot-toast'
 
 export default function App() {
   const [tab, setTab] = useState('models')
+  const { captionJob, cancelCaptionJob } = useStore()
 
   return (
     <TrainingProvider>
     <div className="min-h-screen">
       <Toaster position="top-right" />
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
             <Icon path={mdiBeaker} size={1.2} className="text-purple-400" />
             <h1 className="text-xl font-semibold tracking-wide">Kiko Trainer - FLUX LoRA</h1>
           </div>
-          <Tabs
-            tabs={[
-              { value: 'models', label: 'Models' },
-              { value: 'setup', label: 'Setup' },
-              { value: 'training', label: 'Training' },
-              { value: 'publish', label: 'Publish' },
-              { value: 'outputs', label: 'Outputs' },
-            ]}
-            value={tab}
-            onValueChange={setTab}
-          />
+          <div className="flex items-center gap-4 min-w-0">
+            <Tabs
+              tabs={[
+                { value: 'models', label: 'Models' },
+                { value: 'setup', label: 'Setup' },
+                { value: 'training', label: 'Training' },
+                { value: 'outputs', label: 'Outputs' },
+                { value: 'publish', label: 'Publish' },
+              ]}
+              value={tab}
+              onValueChange={setTab}
+            />
+            {captionJob?.total > 0 && (
+              <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full border bg-background/60">
+                <span className="text-xs">Captioning {captionJob.current}/{captionJob.total}</span>
+                <div className="w-24 h-1.5 bg-zinc-800 rounded overflow-hidden">
+                  <div className="h-1.5 bg-emerald-500" style={{ width: `${(captionJob.current/Math.max(1, captionJob.total))*100}%` }} />
+                </div>
+                <Button size="sm" variant="outline" onClick={cancelCaptionJob}>{captionJob.isRunning ? 'Cancel' : 'Clear'}</Button>
+              </div>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async ()=>{
+                try {
+                  const res = await fetch(apiUrl('/api/system/purge-vram'), { method: 'POST' })
+                  const data = await res.json().catch(()=>({}))
+                  if (res.ok) {
+                    toast.success('VRAM purged')
+                  } else {
+                    toast.error('Purge failed')
+                  }
+                } catch {
+                  toast.error('Purge failed')
+                }
+              }}
+            >Purge VRAM</Button>
+          </div>
         </div>
       </header>
 

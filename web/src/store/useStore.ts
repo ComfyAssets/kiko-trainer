@@ -1,5 +1,7 @@
 import { create } from 'zustand';
-import { ImageFile, TrainingConfig, TrainingStatus, HuggingFaceConfig, Model, Florence2Config } from '../types';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { ImageFile, TrainingConfig, TrainingStatus, HuggingFaceConfig, Model, Florence2Config, CaptionJob } from '../types';
+import { generateCaptions } from '../services/captionApi';
 
 interface AppStore {
   // Models
@@ -31,6 +33,12 @@ interface AppStore {
   huggingFace: HuggingFaceConfig;
   setHuggingFaceToken: (token: string) => void;
   setHuggingFaceAuth: (isAuthenticated: boolean, username?: string) => void;
+
+  // Caption job (persists across tabs/routes)
+  captionJob: CaptionJob;
+  startCaptionJob: (params: Record<string, any>) => Promise<void>;
+  cancelCaptionJob: () => void;
+  resumeCaptionJob: () => Promise<void>;
 }
 
 const defaultConfig: TrainingConfig = {
@@ -99,7 +107,7 @@ const defaultFlorenceConfig: Florence2Config = {
   qwenMaxPixels: 1280 * 28 * 28,
 };
 
-export const useStore = create<AppStore>((set) => ({
+export const useStore = create<AppStore>()(persist((set, get) => ({
   // Models
   models: {},
   setModels: (models) => set({ models }),
@@ -202,4 +210,70 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => ({
       huggingFace: { ...state.huggingFace, isAuthenticated, username },
     })),
+
+  // Caption job state
+  captionJob: { isRunning: false, current: 0, total: 0, queue: [] },
+  cancelCaptionJob: () => set({ captionJob: { isRunning: false, cancelRequested: false, current: 0, total: 0, queue: [] } }),
+  startCaptionJob: async (params) => {
+    const state = get()
+    if (state.captionJob.isRunning) return
+    const queue = state.images.map(img => img.id)
+    set({ captionJob: { isRunning: true, cancelRequested: false, current: 0, total: queue.length, queue, startedAt: Date.now(), params } })
+    await get().resumeCaptionJob()
+  },
+  resumeCaptionJob: async () => {
+    const run = async () => {
+      while (true) {
+        const st = get().captionJob
+        if (!st.isRunning || st.cancelRequested) break
+        if (st.current >= st.total) break
+        const idx = st.current
+        const imgId = st.queue[idx]
+        // find image
+        const img = get().images.find(i => i.id === imgId)
+        if (img) {
+          try {
+            const params = get().captionJob.params || {}
+            const modelType = params.modelType || (params.model?.includes('Florence') ? 'florence2' : 'qwen-vl')
+            const captions = await generateCaptions([img.file], {
+              modelType,
+              model: params.model,
+              style: params.captionStyle || 'brief',
+              attention: params.attention || 'eager',
+              maxLength: params.maxLen || 1024,
+              beam: params.beam || 3,
+              temperature: params.temp || 0.7,
+              removePrefix: params.removePrefix ?? true,
+              batchSize: params.batchSize || 1,
+              triggerWord: params.trigger || '',
+              topP: params.topP || 0.9,
+              qwenPreset: params.qwenPreset,
+              minPixels: params.qwenMinPixels,
+              maxPixels: params.qwenMaxPixels,
+            })
+            const newCaption = captions[0] || `${params.trigger || ''}, image`
+            set((state) => ({ images: state.images.map(it => it.id === imgId ? { ...it, caption: newCaption } : it) }))
+          } catch (e) {
+            // keep existing caption on error
+          }
+        }
+        // advance
+        set((state) => ({ captionJob: { ...state.captionJob, current: state.captionJob.current + 1 } }))
+        await new Promise(r => setTimeout(r, 0))
+      }
+      // finalize: if completed without cancel, clear counters so UI chip disappears
+      const fin = get().captionJob
+      if (!fin.cancelRequested && fin.current >= fin.total) {
+        set({ captionJob: { isRunning: false, cancelRequested: false, current: 0, total: 0, queue: [] } })
+      } else {
+        set((state) => ({ captionJob: { ...state.captionJob, isRunning: false, cancelRequested: false } }))
+      }
+    }
+    if (!get().captionJob.isRunning) return
+    run()
+  },
+}), {
+  name: 'kiko-store',
+  storage: createJSONStorage(() => localStorage),
+  partialize: (state) => ({ config: state.config, captionJob: state.captionJob }),
 }))

@@ -1362,6 +1362,61 @@ async def list_models(path: Optional[str] = None):
     except Exception as e:
         return {"models": [], "error": str(e)}
 
+
+@app.post("/api/system/purge-vram")
+async def api_purge_vram():
+    """Attempt to free GPU VRAM by clearing caches and unloading cached models."""
+    try:
+        import gc
+        before_alloc = None
+        before_reserved = None
+        if torch.cuda.is_available():
+            try:
+                before_alloc = torch.cuda.memory_allocated()
+                before_reserved = torch.cuda.memory_reserved()
+            except Exception:
+                pass
+
+        # Clear any app-level model caches
+        try:
+            MODEL_CACHE.clear()
+        except Exception:
+            pass
+
+        # Python GC + torch CUDA cache purge
+        try:
+            gc.collect()
+        except Exception:
+            pass
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+                if hasattr(torch.cuda, 'ipc_collect'):
+                    torch.cuda.ipc_collect()
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+
+        after_alloc = None
+        after_reserved = None
+        if torch.cuda.is_available():
+            try:
+                after_alloc = torch.cuda.memory_allocated()
+                after_reserved = torch.cuda.memory_reserved()
+            except Exception:
+                pass
+
+        def fmt(x):
+            return None if x is None else round(x / (1024**3), 3)
+
+        return {
+            "ok": True,
+            "before": {"allocated_gb": fmt(before_alloc), "reserved_gb": fmt(before_reserved)},
+            "after": {"allocated_gb": fmt(after_alloc), "reserved_gb": fmt(after_reserved)},
+        }
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
 @app.delete("/models/{model_name}")
 async def delete_model(model_name: str, path: Optional[str] = None):
     """Delete a model file and associated metadata/images"""
@@ -1970,6 +2025,56 @@ def api_train_prepare(payload: Dict[str, Any]):
         except Exception:
             bucket_reso_steps = None
 
+        # Decide sample prompts path ext
+        sp_ext = 'txt'
+        converted_sample_prompts = None
+        if isinstance(sample_prompts, str):
+            sps = sample_prompts.strip()
+            if sps.startswith('[[prompt]]'):
+                # Our UI may send a simple TOML array-of-tables format ([[prompt]] ...)
+                # sd-scripts expects [prompt] with [[prompt.subset]] entries.
+                # Convert here to avoid runtime errors in load_prompts.
+                sp_ext = 'toml'
+
+                def _convert_simple_prompt_toml(src: str) -> str:
+                    lines = src.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+                    blocks: list[list[str]] = []
+                    current: list[str] | None = None
+                    for ln in lines:
+                        s = ln.strip()
+                        if not s:
+                            continue
+                        if s.startswith('[[prompt]]'):
+                            if current:
+                                blocks.append(current)
+                            current = []
+                            continue
+                        # collect k = v lines only
+                        if '=' in s and not s.startswith('#'):
+                            if current is None:
+                                current = []
+                            current.append(s)
+                    if current:
+                        blocks.append(current)
+                    # Build target TOML
+                    out: list[str] = []
+                    out.append('[prompt]')
+                    for blk in blocks:
+                        out.append('')
+                        out.append('[[prompt.subset]]')
+                        out.extend(blk)
+                    out.append('')
+                    return '\n'.join(out)
+
+                try:
+                    converted_sample_prompts = _convert_simple_prompt_toml(sps)
+                except Exception:
+                    # Fall back to original text if conversion fails
+                    converted_sample_prompts = sps
+            elif sps.startswith('{') or sps.startswith('['):
+                sp_ext = 'json'
+        sp_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/sample_prompts.{sp_ext}")
+
         sh_text = tu_gen_sh(
             base_model,
             output_name,
@@ -1995,6 +2100,8 @@ def api_train_prepare(payload: Dict[str, Any]):
             rank_dropout,
             module_dropout,
             pretrained_path,
+            payload.get('sample_sampler'),
+            sp_path,
         )
         dataset_folder = payload.get("dataset_folder") or f"datasets/{output_name}"
         toml_text = tu_gen_toml(
@@ -2022,9 +2129,12 @@ def api_train_prepare(payload: Dict[str, Any]):
         ds_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/dataset.toml")
         with open(ds_path, "w", encoding="utf-8") as f:
             f.write(toml_text)
-        sp_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/sample_prompts.txt")
+        # Write sample prompts with chosen extension
         with open(sp_path, "w", encoding="utf-8") as f:
-            f.write(sample_prompts)
+            if converted_sample_prompts is not None:
+                f.write(converted_sample_prompts)
+            else:
+                f.write(sample_prompts)
 
         run_id = str(uuid.uuid4())
         RUNS[run_id] = {
@@ -2068,6 +2178,7 @@ async def api_train_prepare_upload(
     vram: str = Form("20G"),
     sample_prompts: str = Form(""),
     sample_every_n_steps: int = Form(0),
+    sample_sampler: Optional[str] = Form(None),
     class_tokens: str = Form(""),
     num_repeats: int = Form(10),
     train_batch_size: int = Form(1),
@@ -2090,6 +2201,9 @@ async def api_train_prepare_upload(
     images: List[UploadFile] = File(None),
 ):
     try:
+        ok_utils, msg_utils = ensure_train_utils()
+        if not ok_utils:
+            return JSONResponse({"ok": False, "message": "training utilities unavailable", "detail": msg_utils}, status_code=500)
         ok_utils, msg_utils = ensure_train_utils()
         if not ok_utils:
             return JSONResponse({"ok": False, "message": "training utilities unavailable", "detail": msg_utils}, status_code=500)
@@ -2118,6 +2232,50 @@ async def api_train_prepare_upload(
                 full_caption = f"{class_tokens} {cap_text}".strip()
                 with open(out_path.with_suffix('.txt'), 'w') as tf:
                     tf.write(full_caption)
+
+        # Decide sample prompts path ext
+        sp_ext = 'txt'
+        converted_sample_prompts = None
+        if isinstance(sample_prompts, str):
+            sps = sample_prompts.strip()
+            if sps.startswith('[[prompt]]'):
+                sp_ext = 'toml'
+
+                def _convert_simple_prompt_toml(src: str) -> str:
+                    lines = src.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+                    blocks: list[list[str]] = []
+                    current: list[str] | None = None
+                    for ln in lines:
+                        s = ln.strip()
+                        if not s:
+                            continue
+                        if s.startswith('[[prompt]]'):
+                            if current:
+                                blocks.append(current)
+                            current = []
+                            continue
+                        if '=' in s and not s.startswith('#'):
+                            if current is None:
+                                current = []
+                            current.append(s)
+                    if current:
+                        blocks.append(current)
+                    out: list[str] = []
+                    out.append('[prompt]')
+                    for blk in blocks:
+                        out.append('')
+                        out.append('[[prompt.subset]]')
+                        out.extend(blk)
+                    out.append('')
+                    return '\n'.join(out)
+
+                try:
+                    converted_sample_prompts = _convert_simple_prompt_toml(sps)
+                except Exception:
+                    converted_sample_prompts = sps
+            elif sps.startswith('{') or sps.startswith('['):
+                sp_ext = 'json'
+        sp_path = tu_resolve_path_without_quotes(f"outputs/{lora_name}/sample_prompts.{sp_ext}")
 
         # Build payload
         payload = {
@@ -2173,7 +2331,21 @@ async def api_train_prepare_upload(
             vr = str(payload["vram"]).upper().replace("B", "")
             payload["vram"] = vr
 
-        return api_train_prepare(payload)
+        # Write prompts file now for upload path as well
+        try:
+            os.makedirs(os.path.dirname(sp_path), exist_ok=True)
+            with open(sp_path, 'w', encoding='utf-8') as f:
+                if converted_sample_prompts is not None:
+                    f.write(converted_sample_prompts)
+                else:
+                    f.write(sample_prompts or '')
+        except Exception:
+            pass
+        if sample_sampler is not None:
+            payload["sample_sampler"] = sample_sampler
+        # Inject prompts path override via advanced flag in prepare path
+        res = api_train_prepare({ **payload, "_sample_prompts_path": sp_path })
+        return res
     except Exception as e:
         import traceback
         tb = traceback.format_exc()

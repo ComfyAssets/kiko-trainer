@@ -61,6 +61,16 @@ export interface TrainingStatus {
   status: string;
 }
 
+export interface CaptionJob {
+  isRunning: boolean;
+  cancelRequested?: boolean;
+  current: number;
+  total: number;
+  queue: string[]; // image ids in order
+  startedAt?: number;
+  params?: Record<string, any>;
+}
+
 export interface HuggingFaceConfig {
   token: string;
   isAuthenticated: boolean;

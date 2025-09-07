@@ -108,9 +108,11 @@ def gen_sh(
     rank_dropout: float | None = None,
     module_dropout: float | None = None,
     pretrained_override: str | None = None,
+    sample_sampler: str | None = None,
+    sample_prompts_path_override: str | None = None,
 ):
     output_dir = resolve_path(f"outputs/{output_name}")
-    sample_prompts_path = resolve_path(f"outputs/{output_name}/sample_prompts.txt")
+    sample_prompts_path = sample_prompts_path_override or resolve_path(f"outputs/{output_name}/sample_prompts.txt")
 
     line_break = "\\" if os.name != 'nt' else "^"
     file_type = "sh" if os.name != 'nt' else "bat"
@@ -210,6 +212,8 @@ def gen_sh(
         args.append(f"--network_alpha {network_alpha}")
     args.extend(optimizer_flags)
     args.extend(sample_flags)
+    if sample_sampler:
+        args.append(f"--sample_sampler {sample_sampler}")
     args.append(f"--learning_rate {learning_rate}")
     if lr_scheduler and vram not in ("12G", "16G"):
         args.append(f"--lr_scheduler {lr_scheduler}")

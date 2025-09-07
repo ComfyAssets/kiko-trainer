@@ -9,7 +9,9 @@ import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { Select } from "../components/ui/select";
+import { Dialog } from "../components/ui/dialog";
 import { Button } from "../components/ui/button";
+import { Switch } from "../components/ui/switch";
 import { Separator } from "../components/ui/separator";
 import { Upload, ImagePlus, X, Sparkles, HelpCircle } from "lucide-react";
 import { generateCaptions, getModelStatus, ModelStatus } from "../services/captionApi";
@@ -39,6 +41,31 @@ export function SetupPageEnhanced() {
   
   // Use global store for unlimited image handling
   const { images, addImages, addImagesWithCaptions, removeImage, updateCaption, clearImages, updateConfig } = useStore();
+  // --------- Edit Captions (Find/Replace or Regex Remove) ---------
+  const [editSearch, setEditSearch] = React.useState('')
+  const [editReplace, setEditReplace] = React.useState('')
+  const [regexMode, setRegexMode] = React.useState(false)
+  const [ignoreCase, setIgnoreCase] = React.useState(true)
+  const [previewOpen, setPreviewOpen] = React.useState(false)
+  const [previewIndex, setPreviewIndex] = React.useState<number | null>(null)
+  const [applyAllNext, setApplyAllNext] = React.useState(false)
+  const [regexError, setRegexError] = React.useState<string | null>(null)
+  // Build regex from current find settings
+  function buildRegexFromSearch(): RegExp | null {
+    try {
+      let pattern = editSearch
+      let flags = 'g'
+      if (pattern.startsWith('(?i)')) { pattern = pattern.slice(4); flags += 'i' }
+      else if (ignoreCase) { flags += 'i' }
+      if (!regexMode) {
+        pattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      }
+      return new RegExp(pattern, flags)
+    } catch (e: any) {
+      setRegexError(String(e?.message || e))
+      return null
+    }
+  }
   
   // Debug: log current images count
   if (import.meta.env.DEV) console.log('SetupPageEnhanced render - Current images.length:', images.length);
@@ -62,10 +89,8 @@ export function SetupPageEnhanced() {
       setContextDatasetFolder(`/home/vito/ai-apps/kiko-trainer/datasets/${loraName}`);
     }
   }, [loraName, setContextDatasetFolder]);
-  const [isGeneratingCaptions, setIsGeneratingCaptions] = React.useState(false);
   const [modelStatus, setModelStatus] = React.useState<ModelStatus | null>(null);
-  const [capDone, setCapDone] = React.useState(0);
-  const [capTotal, setCapTotal] = React.useState(0);
+  const { captionJob, startCaptionJob, cancelCaptionJob } = useStore()
   
   // Caption model settings
   const [captionModel, setCaptionModel] = React.useState("qwen-7b");
@@ -142,6 +167,7 @@ export function SetupPageEnhanced() {
         const p = data.params
         try {
           if (p.baseModel) updateConfig('baseModel', p.baseModel)
+          if (p.pretrainedPath) updateConfig('pretrainedPath', p.pretrainedPath)
           if (p.vram) updateConfig('vram', p.vram)
           if (p.lr) updateConfig('learningRate', p.lr)
           if (p.dim != null) updateConfig('networkDim', Number(p.dim))
@@ -153,6 +179,9 @@ export function SetupPageEnhanced() {
           if (p.guidance != null) updateConfig('guidanceScale', Number(p.guidance))
           if (p.samplePrompts != null) updateConfig('samplePrompts', String(p.samplePrompts))
           if (p.sampleEvery != null) updateConfig('sampleEverySteps', Number(p.sampleEvery))
+          if (p.sampleRes) updateConfig('sampleRes', String(p.sampleRes))
+          if (p.sampleSteps != null) updateConfig('sampleSteps', Number(p.sampleSteps))
+          if (p.sampleSampler) updateConfig('sampleSampler', String(p.sampleSampler))
           if (p.numRepeats != null) updateConfig('numRepeats', Number(p.numRepeats))
           if (p.seed != null) updateConfig('seed', Number(p.seed))
           if (p.workers != null) updateConfig('workers', Number(p.workers))
@@ -205,66 +234,33 @@ export function SetupPageEnhanced() {
       alert("Please enter a trigger word first");
       return;
     }
-
-    setIsGeneratingCaptions(true);
-    setCapDone(0);
-    setCapTotal(images.length);
-    
-    // Get the actual model repo and check status
-    const modelRepo = getModelRepo(captionModel);
-    
-    // Start polling model status
-    pollModelStatus(modelRepo);
-    
-    try {
-      // Process images sequentially to provide progress feedback
-      for (let i = 0; i < images.length; i++) {
-        const img = images[i];
-        try {
-          const captions = await generateCaptions(
-            [img.file],
-            {
-              modelType: captionModel.includes('florence') ? 'florence2' : 'qwen-vl',
-              model: (() => {
-                switch (captionModel) {
-                  case 'florence-large': return 'microsoft/Florence-2-large';
-                  case 'florence-small': return 'microsoft/Florence-2-base';
-                  case 'qwen-3b': return 'Qwen/Qwen2.5-VL-3B-Instruct';
-                  case 'qwen-7b': return 'Qwen/Qwen2.5-VL-7B-Instruct';
-                  case 'qwen-72b': return 'Qwen/Qwen2.5-VL-72B-Instruct';
-                  default: return 'Qwen/Qwen2.5-VL-7B-Instruct';
-                }
-              })(),
-              style: captionStyle,
-              attention,
-              maxLength: maxLen,
-              beam,
-              temperature: temp,
-              removePrefix,
-              batchSize,
-              triggerWord: trigger,
-              topP: 0.9,
-              qwenPreset: captionModel.includes('qwen') ? captionStyle : undefined,
-              minPixels: captionModel.includes('qwen') ? 256 * 28 * 28 : undefined,
-              maxPixels: captionModel.includes('qwen') ? 1280 * 28 * 28 : undefined
-            }
-          );
-          const newCaption = captions[0] || `${trigger}, image`;
-          updateCaption(img.id, newCaption);
-        } catch (err) {
-          console.error('Caption failed for', img.file.name, err);
-          // Fallback: keep existing or set a minimal caption
-          updateCaption(img.id, img.caption || `${trigger}, image`);
+    const modelRepo = getModelRepo(captionModel)
+    pollModelStatus(modelRepo)
+    await startCaptionJob({
+      trigger,
+      modelType: captionModel.includes('florence') ? 'florence2' : 'qwen-vl',
+      model: (() => {
+        switch (captionModel) {
+          case 'florence-large': return 'microsoft/Florence-2-large';
+          case 'florence-small': return 'microsoft/Florence-2-base';
+          case 'qwen-3b': return 'Qwen/Qwen2.5-VL-3B-Instruct';
+          case 'qwen-7b': return 'Qwen/Qwen2.5-VL-7B-Instruct';
+          case 'qwen-72b': return 'Qwen/Qwen2.5-VL-72B-Instruct';
+          default: return 'Qwen/Qwen2.5-VL-7B-Instruct';
         }
-        setCapDone(i + 1);
-      }
-      toast.success(`Generated captions for ${images.length} image${images.length !== 1 ? 's' : ''}`)
-    } catch (error) {
-      console.error("Failed to generate captions:", error);
-      toast.error("Failed to generate captions")
-    } finally {
-      setIsGeneratingCaptions(false);
-    }
+      })(),
+      captionStyle,
+      attention,
+      maxLen,
+      beam,
+      temp,
+      removePrefix,
+      batchSize,
+      topP: 0.9,
+      qwenPreset: captionModel.includes('qwen') ? captionStyle : undefined,
+      qwenMinPixels: captionModel.includes('qwen') ? 256 * 28 * 28 : undefined,
+      qwenMaxPixels: captionModel.includes('qwen') ? 1280 * 28 * 28 : undefined,
+    })
   }
 
   return (
@@ -440,6 +436,51 @@ export function SetupPageEnhanced() {
             </div>
           </CardContent>
         </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Edit Captions
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="w-4 h-4 text-muted-foreground cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent className="max-w-sm text-xs">
+                  <div>Perform search and replace across captions, or remove via Regex mode.</div>
+                  <div className="mt-2 font-medium">Regex tips</div>
+                  <ul className="list-disc ml-4 space-y-1">
+                    <li>Case-insensitive: <code>(?i)a woman</code></li>
+                    <li>Word boundary: <code>\ba woman\b</code></li>
+                    <li>Flexible spaces: <code>a\s+woman</code></li>
+                  </ul>
+                </TooltipContent>
+              </Tooltip>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <Label className="text-sm">Find</Label>
+              <Input placeholder="Search text or regex" value={editSearch} onChange={e=>setEditSearch(e.target.value)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Switch id="regex-mode" checked={regexMode} onCheckedChange={setRegexMode} />
+                <Label htmlFor="regex-mode">Regex mode</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch id="ignore-case" checked={ignoreCase} onCheckedChange={setIgnoreCase} />
+                <Label htmlFor="ignore-case">Ignore case</Label>
+              </div>
+            </div>
+            <div>
+              <Label className="text-sm">Replace</Label>
+              <Input placeholder="Replacement text" value={editReplace} onChange={e=>setEditReplace(e.target.value)} />
+            </div>
+            {regexError && (<div className="text-xs text-red-400">{regexError}</div>)}
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => { setRegexError(null); const re = buildRegexFromSearch(); if (!re) return; const start = previewIndex!=null ? (previewIndex+1)%images.length : 0; let found: number | null = null; for (let i=0;i<images.length;i++){ const idx=(start+i)%images.length; const cap=images[idx]?.caption||''; re.lastIndex=0; if (re.test(cap)){ found=idx; break } } if (found==null) toast('No matches found'); else { setPreviewIndex(found); setPreviewOpen(true) } }}>Find Next</Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Right Column - Images */}
@@ -478,21 +519,17 @@ export function SetupPageEnhanced() {
                 )}
                 <Button
                   onClick={generateCaptionsForImages}
-                  disabled={images.length === 0 || !trigger || isGeneratingCaptions}
+                  disabled={images.length === 0 || !trigger || captionJob.isRunning || modelStatus?.status === 'downloading'}
                   variant="outline"
                   className="flex items-center gap-2"
                 >
                   <Sparkles size={16} />
-                  {isGeneratingCaptions 
-                    ? (modelStatus?.status === 'downloading' 
-                        ? "Downloading Model..." 
-                        : modelStatus?.status === 'loaded'
-                          ? `Generating (${capDone}/${capTotal})`
-                          : "Loading Model...")
-                    : "Auto-Caption All"}
+                  {captionJob.isRunning
+                    ? `Generating (${captionJob.current}/${captionJob.total})`
+                    : (modelStatus?.status === 'downloading' ? 'Downloading Model...' : 'Auto-Caption All')}
                 </Button>
               </div>
-              {isGeneratingCaptions && modelStatus?.status === 'downloading' && (
+              {modelStatus?.status === 'downloading' && (
                 <div className="text-sm text-gray-600 dark:text-gray-400">
                   <div className="flex items-center gap-2">
                     <div className="w-24 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
@@ -506,16 +543,16 @@ export function SetupPageEnhanced() {
                   <div className="mt-1 text-xs">{modelStatus.message}</div>
                 </div>
               )}
-              {isGeneratingCaptions && modelStatus?.status !== 'downloading' && (
+              {captionJob.total > 0 && captionJob.isRunning && modelStatus?.status !== 'downloading' && (
                 <div className="text-sm text-gray-600 dark:text-gray-400 w-full max-w-xs">
                   <div className="flex items-center gap-2">
                     <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
                       <div
                         className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${capTotal ? Math.round((capDone / capTotal) * 100) : 0}%` }}
+                        style={{ width: `${captionJob.total ? Math.round((captionJob.current / captionJob.total) * 100) : 0}%` }}
                       />
                     </div>
-                    <span className="tabular-nums text-xs">{capDone}/{capTotal}</span>
+                    <span className="tabular-nums text-xs">{captionJob.current}/{captionJob.total}</span>
                   </div>
                   <div className="mt-1 text-xs">Generating captions...</div>
                 </div>
@@ -605,11 +642,76 @@ export function SetupPageEnhanced() {
                   />
                 )}
               />
+              {/* Progress bar for captioning */}
+              {captionJob?.total > 0 && (
+                <div className="mt-4">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span>Captioning {captionJob.current}/{captionJob.total}</span>
+                    <span className="opacity-70">{Math.round((captionJob.current / Math.max(1, captionJob.total)) * 100)}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-zinc-800 rounded overflow-hidden">
+                    <div className="h-2 bg-emerald-500" style={{ width: `${(captionJob.current / Math.max(1, captionJob.total)) * 100}%` }} />
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    {captionJob.isRunning ? (
+                      <Button variant="outline" onClick={cancelCaptionJob}>Cancel</Button>
+                    ) : (
+                      <>
+                        <Button variant="outline" onClick={generateCaptionsForImages}>Resume</Button>
+                        <Button variant="outline" onClick={cancelCaptionJob}>Clear</Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </CardContent>
       </Card>
     </div>
+    <Dialog open={previewOpen} onOpenChange={setPreviewOpen} title="Apply Edit?">
+      {previewIndex != null ? (
+        <div className="space-y-3">
+          <div className="text-xs text-zinc-400">Image: {images[previewIndex]?.file?.name || 'n/a'}</div>
+          <div className="text-xs text-zinc-400">Pattern: <code>{(() => { try { let p=editSearch; let f='g'; if(p.startsWith('(?i)')){p=p.slice(4); f+='i'} else if(ignoreCase){f+='i'}; const pat = regexMode ? p : p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return new RegExp(pat, f).toString() } catch { return '' } })()}</code></div>
+          <div className="p-2 rounded border bg-black/40 text-sm whitespace-pre-wrap">
+            {/* simple highlight by splitting */}
+            {( () => {
+              try {
+                let pattern = editSearch; let flags='g'; if (pattern.startsWith('(?i)')) { pattern=pattern.slice(4); flags+='i' }
+                const re = new RegExp(regexMode ? pattern : pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags)
+                const cap = images[previewIndex]?.caption || ''
+                const out: any[] = []; let last=0; re.lastIndex=0; let m: RegExpExecArray | null
+                while ((m = re.exec(cap)) !== null) { const s=m.index, e=s+(m[0]?.length||0); if (s>last) out.push(cap.slice(last,s)); out.push(<span key={s} className="bg-yellow-600/50">{cap.slice(s,e)}</span>); last=e; if (m[0]?.length===0) re.lastIndex++ }
+                if (last<cap.length) out.push(cap.slice(last)); return out
+              } catch { return images[previewIndex]?.caption || '' }
+            })()}
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch id="apply-all" checked={applyAllNext} onCheckedChange={setApplyAllNext} />
+            <Label htmlFor="apply-all">Apply to all matches</Label>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={()=>setPreviewOpen(false)}>Cancel</Button>
+            <Button onClick={() => { if (previewIndex==null) return; try {
+              let pattern = editSearch; let flags='g'; if (pattern.startsWith('(?i)')) { pattern=pattern.slice(4); flags+='i' }
+              const re = new RegExp(regexMode ? pattern : pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags)
+              if (applyAllNext) {
+                images.forEach(img => { const cap=img.caption||''; re.lastIndex=0; if (re.test(cap)) { const updated = regexMode ? cap.replace(re,'') : cap.replace(re, editReplace); updateCaption(img.id, updated) } })
+                setPreviewOpen(false); toast.success('Applied to all matching captions')
+              } else {
+                const cap = images[previewIndex]?.caption || ''; const updated = regexMode ? cap.replace(re,'') : cap.replace(re, editReplace); updateCaption(images[previewIndex].id, updated)
+                // next
+                let nextIdx: number | null = null; for (let i=1;i<=images.length;i++){ const idx=(previewIndex+i)%images.length; const c=images[idx]?.caption||''; re.lastIndex=0; if (re.test(c)){ nextIdx=idx; break } }
+                if (nextIdx!=null) { setPreviewIndex(nextIdx) } else { setPreviewOpen(false) }
+              }
+            } catch(e){ toast.error('Invalid regex or operation failed') } }}>Apply</Button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-sm">No match selected.</div>
+      )}
+    </Dialog>
     </TooltipProvider>
   );
 }

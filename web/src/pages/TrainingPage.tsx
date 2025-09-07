@@ -36,8 +36,23 @@
     const [res, setRes] = React.useState('512')
     const [timestep, setTimestep] = React.useState('shift')
     const [guidance, setGuidance] = React.useState(1.0)
-    const [samples, setSamples] = React.useState('')
-    const [sampleEvery, setSampleEvery] = React.useState(0)
+  const [samples, setSamples] = React.useState('')
+  const [sampleEvery, setSampleEvery] = React.useState(0)
+  // Sampling controls
+  const [sampleRes, setSampleRes] = React.useState<'512'|'768'|'1024'>('512')
+  const [sampleSteps, setSampleSteps] = React.useState<number>(20)
+  const [sampleSampler, setSampleSampler] = React.useState<string>('ddim')
+  const [openPrompts, setOpenPrompts] = React.useState(false)
+
+  const buildPromptsToml = React.useCallback(() => {
+    const promptLines = (samples || '').split('\n').map(l=>l.trim()).filter(Boolean)
+    if (promptLines.length === 0) return ''
+    const size = parseInt(sampleRes)
+    const blocks = promptLines.map(text => (
+      `[[prompt]]\ntext = ${JSON.stringify(text)}\nwidth = ${size}\nheight = ${size}\nsample_steps = ${sampleSteps}\n`
+    ))
+    return blocks.join('\n')
+  }, [samples, sampleRes, sampleSteps])
   const [numRepeats, setNumRepeats] = React.useState(10)
   const [seed, setSeed] = React.useState(42)
   const [workers, setWorkers] = React.useState(2)
@@ -81,6 +96,10 @@
         const bm = (()=>{ try { return localStorage.getItem('kiko.baseModel') } catch { return null } })()
         if (bm) setBaseModel(bm)
       }
+      if ((config as any).pretrainedPath) {
+        const p = String((config as any).pretrainedPath)
+        setSelectedModelData({ path: p, filename: p.split('/').pop(), name: p.split('/').pop(), metadata: {} } as any)
+      }
       if (config.vram) setVram(config.vram)
       if (config.learningRate) setLr(config.learningRate)
       if (config.networkDim != null) setDim(Number(config.networkDim))
@@ -92,6 +111,9 @@
       if (config.guidanceScale != null) setGuidance(Number(config.guidanceScale))
       if (config.samplePrompts != null) setSamples(String(config.samplePrompts))
       if (config.sampleEverySteps != null) setSampleEvery(Number(config.sampleEverySteps))
+      if ((config as any).sampleRes) setSampleRes(String((config as any).sampleRes) as any)
+      if ((config as any).sampleSteps != null) setSampleSteps(Number((config as any).sampleSteps))
+      if ((config as any).sampleSampler) setSampleSampler(String((config as any).sampleSampler))
       if (config.numRepeats != null) setNumRepeats(Number(config.numRepeats))
       if (config.seed != null) setSeed(Number(config.seed))
       if (config.workers != null) setWorkers(Number(config.workers))
@@ -287,9 +309,22 @@ const trainingConfig = {
       setTermLogs('')
       setIsTraining(true)
       pollMetrics()
+      // Build sample prompts TOML when controls set
+      const promptLines = (samples || '').split('\n').map(l=>l.trim()).filter(Boolean)
+      let preparedSamples = samples
+      if (promptLines.length > 0) {
+        const size = parseInt(sampleRes)
+        const blocks = promptLines.map(text => (
+          `[[prompt]]\ntext = ${JSON.stringify(text)}\nwidth = ${size}\nheight = ${size}\nsample_steps = ${sampleSteps}\n`
+        ))
+        preparedSamples = blocks.join('\n')
+      }
+
       // If we have images in store, upload them to backend dataset folder
       let prep: Response
-      const shouldUpload = images.length > 0 && !(datasetFolder && datasetFolder.trim().length > 0)
+      // If there are images in memory, upload them to create a dataset for this run.
+      // This avoids missing-image errors when a dataset folder path isn't actually present on disk.
+      const shouldUpload = images.length > 0
       if (shouldUpload) {
         const fd = new FormData()
         fd.append('base_model', baseModel)
@@ -304,7 +339,8 @@ const trainingConfig = {
         fd.append('timestep_sampling', String(timestep))
         fd.append('guidance_scale', String(guidance))
         fd.append('vram', String(vram))
-        fd.append('sample_prompts', samples)
+        fd.append('sample_prompts', preparedSamples)
+        if (sampleSampler) fd.append('sample_sampler', String(sampleSampler))
         fd.append('sample_every_n_steps', String(sampleEvery))
         fd.append('class_tokens', classTokens)
         fd.append('num_repeats', String(numRepeats))
@@ -350,8 +386,9 @@ const trainingConfig = {
           timestep_sampling: timestep,
           guidance_scale: guidance,
           vram,
-          sample_prompts: samples,
+          sample_prompts: preparedSamples,
           sample_every_n_steps: sampleEvery,
+          sample_sampler: sampleSampler,
           class_tokens: classTokens,
           num_repeats: numRepeats,
           train_batch_size: batch,
@@ -475,8 +512,9 @@ const trainingConfig = {
         exportedAt: new Date().toISOString(),
         context: { loraName, classTokens, datasetFolder },
         params: {
-          baseModel, vram, lr, dim, epochs, saveEvery, batch, res, timestep, guidance,
-          samplePrompts: samples, sampleEvery, numRepeats, seed, workers,
+          baseModel, pretrainedPath: selectedModelData?.path || '', vram, lr, dim, epochs, saveEvery, batch, res, timestep, guidance,
+          samplePrompts: samples, sampleEvery, sampleRes, sampleSteps, sampleSampler,
+          numRepeats, seed, workers,
           // advanced
           lrScheduler, lrWarmup, noiseOffset, flipSymmetry,
           loraDropout, networkAlpha, rankDropout, moduleDropout,
@@ -1055,7 +1093,7 @@ const trainingConfig = {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label className="flex items-center gap-2">
-                      Generate Samples Every N Steps
+                    Generate Samples @ steps
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
@@ -1068,9 +1106,75 @@ const trainingConfig = {
                     <Input type="number" value={sampleEvery} onChange={e=>setSampleEvery(Number(e.target.value))} />
                     <p className="text-xs text-gray-400">{sampleEvery === 0 ? 'Disabled' : 'Enabled'}</p>
                   </div>
+                  <div>
+                    <Label className="flex items-center gap-2">
+                      Sample Size
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>Resolution for generated sample images. Higher sizes take more time and VRAM.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Select value={sampleRes} onChange={e=>setSampleRes(e.target.value as any)} options={[
+                      { value: '512', label: '512 × 512' },
+                      { value: '768', label: '768 × 768' },
+                      { value: '1024', label: '1024 × 1024' },
+                    ]} />
+                  </div>
+                  <div>
+                    <Label className="flex items-center gap-2">
+                      Sample Steps
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>Number of inference steps per sample image. More steps can improve quality but increase time.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Input type="number" min={1} value={sampleSteps} onChange={e=>setSampleSteps(Number(e.target.value))} />
+                  </div>
+                  <div>
+                    <Label className="flex items-center gap-2">
+                      Sampler
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>Scheduler used for sample generation. Different samplers trade off speed and style.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Select value={sampleSampler} onChange={e=>setSampleSampler(String(e.target.value))} options={[
+                      { value:'ddim', label:'ddim' },
+                      { value:'pndm', label:'pndm' },
+                      { value:'lms', label:'lms' },
+                      { value:'euler', label:'euler' },
+                      { value:'euler_a', label:'euler_a' },
+                      { value:'heun', label:'heun' },
+                      { value:'dpm_2', label:'dpm_2' },
+                      { value:'dpm_2_a', label:'dpm_2_a' },
+                      { value:'dpmsolver', label:'dpmsolver' },
+                      { value:'dpmsolver++', label:'dpmsolver++' },
+                      { value:'dpmsingle', label:'dpmsingle' },
+                      { value:'k_lms', label:'k_lms' },
+                      { value:'k_euler', label:'k_euler' },
+                      { value:'k_euler_a', label:'k_euler_a' },
+                      { value:'k_dpm_2', label:'k_dpm_2' },
+                      { value:'k_dpm_2_a', label:'k_dpm_2_a' },
+                    ]} />
+                  </div>
                 </div>
               </CardContent>
               <CardFooter className="flex flex-col gap-2">
+                <Button variant="outline" onClick={() => setOpenPrompts(true)} className="w-full">
+                  <FileText className="w-4 h-4 mr-2" /> View Prompts
+                </Button>
                 <Button variant="outline" onClick={() => setOpenScript(true)} className="w-full">
                   <FileText className="w-4 h-4 mr-2" /> View Script
                 </Button>
@@ -1101,6 +1205,13 @@ const trainingConfig = {
         </Dialog>
       </div>
       </div>
+      {/* Prompts Preview */}
+      <Dialog open={openPrompts} onOpenChange={setOpenPrompts} title="Sample Prompts (preview.toml)">
+        <div className="text-xs mb-2 text-zinc-400">Sampler: {sampleSampler} • Size: {sampleRes} • Steps: {sampleSteps}</div>
+        <pre className="text-xs overflow-auto p-4 bg-black/40 rounded-lg border whitespace-pre font-mono">
+{buildPromptsToml() || '# Enter prompts above to preview TOML\n'}
+        </pre>
+      </Dialog>
       {/* Bottom Dock: Training Output */}
       <div
         className={`fixed z-50 left-0 right-0 bottom-0 ${consoleOpen ? '' : ''}`}
