@@ -160,7 +160,7 @@ def _max_sample_res_for_vram(v: str) -> Optional[int]:
     if v.startswith('20'):
         return 768
     if v.startswith('24'):
-        return 896
+        return 768
     return None
 
 
@@ -205,6 +205,10 @@ def _convert_simple_prompt_toml(src: str) -> str:
         if '=' in s and not s.startswith('#'):
             if current is None:
                 current = []
+            # normalize 'text' -> 'prompt'
+            if s.startswith('text'):
+                key, val = s.split('=', 1)
+                s = f"prompt ={val}"
             current.append(s)
     if current:
         blocks.append(current)
@@ -217,6 +221,20 @@ def _convert_simple_prompt_toml(src: str) -> str:
         out.extend(blk)
     out.append('')
     return '\n'.join(out)
+
+
+def _rename_text_key_in_toml(src: str) -> str:
+    out_lines: list[str] = []
+    for ln in src.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+        s = ln.strip()
+        if s.startswith('text') and '=' in s:
+            try:
+                _, val = s.split('=', 1)
+                ln = f"prompt ={val}"
+            except Exception:
+                pass
+        out_lines.append(ln)
+    return '\n'.join(out_lines)
 
 # Global model status tracking
 MODEL_STATUS = {}  # repo_id -> {"status": "downloading|loaded|error", "progress": 0-100, "message": "..."}
@@ -2113,7 +2131,7 @@ def api_train_prepare(payload: Dict[str, Any]):
             if v.startswith('20'):
                 return 768
             if v.startswith('24'):
-                return 896
+                return 768
             return None
 
         def _round16(x: int) -> int:
@@ -2151,7 +2169,7 @@ def api_train_prepare(payload: Dict[str, Any]):
             if v.startswith('20'):
                 return 768
             if v.startswith('24'):
-                return 896
+                return 768
             return None
 
         def _round16(x: int) -> int:
@@ -2219,14 +2237,18 @@ def api_train_prepare(payload: Dict[str, Any]):
 
                 try:
                     converted_sample_prompts = _cap_width_height_in_toml(
-                        _convert_simple_prompt_toml(sps), _max_sample_res_for_vram(vram)
+                        _rename_text_key_in_toml(_convert_simple_prompt_toml(sps)), _max_sample_res_for_vram(vram)
                     )
                 except Exception:
                     # Fall back to original text if conversion fails
-                    converted_sample_prompts = _cap_width_height_in_toml(sps, _max_sample_res_for_vram(vram))
+                    converted_sample_prompts = _cap_width_height_in_toml(
+                        _rename_text_key_in_toml(sps), _max_sample_res_for_vram(vram)
+                    )
             elif sps.startswith('[prompt]') or '[[prompt.subset]]' in sps:
                 sp_ext = 'toml'
-                converted_sample_prompts = _cap_width_height_in_toml(sps, _max_sample_res_for_vram(vram))
+                converted_sample_prompts = _cap_width_height_in_toml(
+                    _rename_text_key_in_toml(sps), _max_sample_res_for_vram(vram)
+                )
             elif sps.startswith('{') or sps.startswith('['):
                 sp_ext = 'json'
         sp_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/sample_prompts.{sp_ext}")
@@ -2427,13 +2449,17 @@ async def api_train_prepare_upload(
 
                 try:
                     converted_sample_prompts = _cap_width_height_in_toml(
-                        _convert_simple_prompt_toml(sps), _max_sample_res_for_vram(vram)
+                        _rename_text_key_in_toml(_convert_simple_prompt_toml(sps)), _max_sample_res_for_vram(vram)
                     )
                 except Exception:
-                    converted_sample_prompts = _cap_width_height_in_toml(sps, _max_sample_res_for_vram(vram))
+                    converted_sample_prompts = _cap_width_height_in_toml(
+                        _rename_text_key_in_toml(sps), _max_sample_res_for_vram(vram)
+                    )
             elif sps.startswith('[prompt]') or '[[prompt.subset]]' in sps:
                 sp_ext = 'toml'
-                converted_sample_prompts = _cap_width_height_in_toml(sps, _max_sample_res_for_vram(vram))
+                converted_sample_prompts = _cap_width_height_in_toml(
+                    _rename_text_key_in_toml(sps), _max_sample_res_for_vram(vram)
+                )
             elif sps.startswith('{') or sps.startswith('['):
                 sp_ext = 'json'
         sp_path = tu_resolve_path_without_quotes(f"outputs/{lora_name}/sample_prompts.{sp_ext}")
