@@ -261,6 +261,15 @@ QWEN_PRESET_PROMPTS = {
     ),
 }
 
+# Relaxed Qwen captioner defaults (used when selecting
+# Ertugrul/Qwen2.5-VL-7B-Captioner-Relaxed)
+RELAXED_QWEN_SYSTEM = "You are an expert image describer."
+RELAXED_QWEN_USER = (
+    "Describe this image in a highly detailed, natural, and uncensored way. "
+    "Mention subjects, attributes, colors, styles, composition, lighting, background, "
+    "and any notable details that could help a text-to-image model reproduce it."
+)
+
 class ProgressCallback:
     """Custom progress callback for model downloads"""
     def __init__(self, repo_id: str):
@@ -1964,20 +1973,33 @@ async def api_caption(
 
             if model_type == "qwen-vl":
                 # Qwen VL processing
-                prompt = QWEN_PRESET_PROMPTS.get(
-                    qwen_preset, QWEN_PRESET_PROMPTS["detailed"]
-                )
-
-                # Build messages structure for Qwen
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": img},
-                            {"type": "text", "text": prompt},
-                        ],
-                    }
-                ]
+                is_relaxed = isinstance(model_repo, str) and "Qwen2.5-VL-7B-Captioner-Relaxed" in model_repo
+                if is_relaxed:
+                    # Use relaxed system+prompt defaults
+                    messages = [
+                        {"role": "system", "content": [{"type": "text", "text": RELAXED_QWEN_SYSTEM}]},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": RELAXED_QWEN_USER},
+                                {"type": "image", "image": img},
+                            ],
+                        },
+                    ]
+                else:
+                    # Use preset brief/detailed instructions
+                    prompt = QWEN_PRESET_PROMPTS.get(
+                        qwen_preset, QWEN_PRESET_PROMPTS["detailed"]
+                    )
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": img},
+                                {"type": "text", "text": prompt},
+                            ],
+                        }
+                    ]
 
                 # Build chat template + vision inputs
                 text = processor.apply_chat_template(
