@@ -58,7 +58,21 @@ export default function App() {
                   const res = await fetch(apiUrl('/api/system/purge-vram'), { method: 'POST' })
                   const data = await res.json().catch(()=>({}))
                   if (res.ok) {
-                    toast.success('VRAM purged')
+                    const bA = data?.before?.allocated_gb
+                    const bR = data?.before?.reserved_gb
+                    const aA = data?.after?.allocated_gb
+                    const aR = data?.after?.reserved_gb
+                    const freedAlloc = (typeof bA === 'number' && typeof aA === 'number') ? Math.max(0, bA - aA) : null
+                    const freedRes = (typeof bR === 'number' && typeof aR === 'number') ? Math.max(0, bR - aR) : null
+                    const fmt = (n: number) => `${n.toFixed(3)} GB`
+                    let msg = 'VRAM purged'
+                    if (freedAlloc !== null || freedRes !== null) {
+                      const parts: string[] = []
+                      if (freedAlloc !== null) parts.push(`freed ${fmt(freedAlloc)} allocated`)
+                      if (freedRes !== null) parts.push(`freed ${fmt(freedRes)} reserved`)
+                      msg = `VRAM purged: ${parts.join(', ')}`
+                    }
+                    toast.success(msg)
                   } else {
                     toast.error('Purge failed')
                   }
