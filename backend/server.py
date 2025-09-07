@@ -2065,6 +2065,11 @@ def api_train_prepare(payload: Dict[str, Any]):
         workers = int(payload.get("workers", 2))
         learning_rate = str(payload.get("learning_rate", "8e-4"))
         network_dim = int(payload.get("network_dim", 4))
+        blocks_to_swap = payload.get("blocks_to_swap")
+        try:
+            blocks_to_swap = None if blocks_to_swap is None or blocks_to_swap == "" else int(blocks_to_swap)
+        except Exception:
+            blocks_to_swap = None
         network_alpha = payload.get("network_alpha")
         try:
             network_alpha = float(network_alpha) if network_alpha is not None else None
@@ -2125,6 +2130,17 @@ def api_train_prepare(payload: Dict[str, Any]):
             cap = cap_map.get(vram_norm)
             if cap is not None and network_dim > cap:
                 network_dim = cap
+        except Exception:
+            pass
+        effective_network_dim = network_dim
+        # Decide effective blocks_to_swap mirroring gen_sh
+        eff_blocks_to_swap = None
+        try:
+            if isinstance(blocks_to_swap, int):
+                eff_blocks_to_swap = blocks_to_swap if blocks_to_swap > 0 else None
+            else:
+                if vram_norm in ("20G", "24G"):
+                    eff_blocks_to_swap = 18
         except Exception:
             pass
 
@@ -2290,6 +2306,7 @@ def api_train_prepare(payload: Dict[str, Any]):
             pretrained_path,
             payload.get('sample_sampler'),
             sp_path,
+            blocks_to_swap_override=eff_blocks_to_swap,
         )
         dataset_folder = payload.get("dataset_folder") or f"datasets/{output_name}"
         toml_text = tu_gen_toml(
@@ -2340,6 +2357,8 @@ def api_train_prepare(payload: Dict[str, Any]):
             "sh_path": sh_path,
             "script": sh_text,
             "dataset": toml_text,
+            "effective_network_dim": effective_network_dim,
+            "blocks_to_swap": eff_blocks_to_swap or 0,
         }
     except Exception as e:
         import traceback
@@ -2357,6 +2376,7 @@ async def api_train_prepare_upload(
     learning_rate: str = Form("8e-4"),
     network_dim: int = Form(4),
     network_alpha: float | None = Form(None),
+    blocks_to_swap: Optional[int] = Form(None),
     rank_dropout: float | None = Form(None),
     module_dropout: float | None = Form(None),
     max_train_epochs: int = Form(16),
@@ -2498,6 +2518,8 @@ async def api_train_prepare_upload(
             "train_batch_size": train_batch_size,
             "dataset_folder": ds_folder,
         }
+        if blocks_to_swap is not None:
+            payload["blocks_to_swap"] = blocks_to_swap
         if pretrained_path:
             payload["pretrained_path"] = pretrained_path
         if lr_scheduler is not None:

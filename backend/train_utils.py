@@ -110,6 +110,7 @@ def gen_sh(
     pretrained_override: str | None = None,
     sample_sampler: str | None = None,
     sample_prompts_path_override: str | None = None,
+    blocks_to_swap_override: int | None = None,
 ):
     output_dir = resolve_path(f"outputs/{output_name}")
     sample_prompts_path = sample_prompts_path_override or resolve_path(f"outputs/{output_name}/sample_prompts.txt")
@@ -226,8 +227,15 @@ def gen_sh(
     if vram not in ("12G", "16G", "20G", "24G"):
         args.append("--highvram")
     # Reduce VRAM during forward/backward by swapping blocks
-    if vram in ("20G", "24G"):
-        args.append("--blocks_to_swap 18")
+    eff_blocks_to_swap: int | None = None
+    if isinstance(blocks_to_swap_override, int):
+        if blocks_to_swap_override > 0:
+            eff_blocks_to_swap = blocks_to_swap_override
+    else:
+        if vram in ("20G", "24G"):
+            eff_blocks_to_swap = 18
+    if eff_blocks_to_swap is not None:
+        args.append(f"--blocks_to_swap {eff_blocks_to_swap}")
     args.append(f"--max_train_epochs {max_train_epochs}")
     args.append(f"--save_every_n_epochs {save_every_n_epochs}")
     args.append(f"--dataset_config {resolve_path(f'outputs/{output_name}/dataset.toml')}")

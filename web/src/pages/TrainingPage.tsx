@@ -27,7 +27,8 @@
     const { loraName, classTokens, datasetFolder } = useTraining()
     
     const [baseModel, setBaseModel] = React.useState('FLUX.1-dev')
-    const [vram, setVram] = React.useState('20GB')
+  const [vram, setVram] = React.useState('20GB')
+  const [blocksToSwap, setBlocksToSwap] = React.useState<string>('auto') // 'auto' | 'off' | number string
     const [lr, setLr] = React.useState('8e-4')
     const [dim, setDim] = React.useState(4)
     const [epochs, setEpochs] = React.useState(16)
@@ -356,6 +357,10 @@ const trainingConfig = {
           if (networkAlpha != null) fd.append('network_alpha', String(networkAlpha))
           if (rankDropout != null) fd.append('rank_dropout', String(rankDropout))
           if (moduleDropout != null) fd.append('module_dropout', String(moduleDropout))
+          if (blocksToSwap && blocksToSwap !== 'auto') {
+            const val = blocksToSwap === 'off' ? '0' : String(parseInt(blocksToSwap))
+            fd.append('blocks_to_swap', val)
+          }
           // Bucketing
           fd.append('enable_bucket', String(!!enableBucket))
           if (minBucketReso != null) fd.append('min_bucket_reso', String(minBucketReso))
@@ -404,6 +409,9 @@ const trainingConfig = {
           prepBody.network_alpha = networkAlpha
           prepBody.rank_dropout = rankDropout
           prepBody.module_dropout = moduleDropout
+          if (blocksToSwap && blocksToSwap !== 'auto') {
+            prepBody.blocks_to_swap = blocksToSwap === 'off' ? 0 : parseInt(blocksToSwap)
+          }
           // Bucketing
           prepBody.enable_bucket = enableBucket
           prepBody.min_bucket_reso = minBucketReso
@@ -426,6 +434,21 @@ const trainingConfig = {
         throw new Error('prepare failed')
       }
       const prepData = await prep.json()
+      // Hints: show rank capping and block swap usage
+      if (typeof prepData?.effective_network_dim === 'number' && prepData.effective_network_dim !== dim) {
+        const from = dim
+        const to = prepData.effective_network_dim
+        try { (await import('react-hot-toast')).toast?.(null as any) } catch {}
+      }
+      try {
+        const { toast } = await import('react-hot-toast')
+        if (typeof prepData?.effective_network_dim === 'number' && prepData.effective_network_dim !== dim) {
+          toast?.success(`Rank capped: ${dim} → ${prepData.effective_network_dim} for ${vram}`)
+        }
+        if (typeof prepData?.blocks_to_swap === 'number' && prepData.blocks_to_swap > 0) {
+          toast?.(`Block swap enabled (${prepData.blocks_to_swap}) to reduce VRAM`, { icon: '🧠' })
+        }
+      } catch {}
       const rid = prepData.run_id as string
       setRunId(rid)
       pollLogs(rid)
@@ -1058,6 +1081,26 @@ const trainingConfig = {
                   </Tooltip>
                 </Label>
                 <Input type="number" value={workers} onChange={e=>setWorkers(Number(e.target.value))} />
+              </div>
+              <div>
+                <Label className="flex items-center gap-2">
+                  Block Swap (VRAM saver)
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p>Swap model blocks between GPU and CPU during training to reduce peak VRAM. Auto enables this on 20–24GB. Turn off or set a custom number of blocks.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </Label>
+                <Select value={blocksToSwap} onChange={e=>setBlocksToSwap(e.target.value)} options={[
+                  { value: 'auto', label: 'Auto (recommended)' },
+                  { value: 'off', label: 'Off' },
+                  { value: '12', label: '12 blocks' },
+                  { value: '18', label: '18 blocks' },
+                  { value: '24', label: '24 blocks' },
+                ]} />
               </div>
                 </div>
               </CollapsibleSection>
