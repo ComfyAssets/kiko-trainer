@@ -222,7 +222,12 @@ def gen_sh(
     args.append("--cache_text_encoder_outputs")
     args.append("--cache_text_encoder_outputs_to_disk")
     args.append("--fp8_base")
-    args.append("--highvram")
+    # Only enable highvram for unknown/very large VRAM settings; it increases VRAM residency
+    if vram not in ("12G", "16G", "20G", "24G"):
+        args.append("--highvram")
+    # Reduce VRAM during forward/backward by swapping blocks
+    if vram in ("20G", "24G"):
+        args.append("--blocks_to_swap 18")
     args.append(f"--max_train_epochs {max_train_epochs}")
     args.append(f"--save_every_n_epochs {save_every_n_epochs}")
     args.append(f"--dataset_config {resolve_path(f'outputs/{output_name}/dataset.toml')}")

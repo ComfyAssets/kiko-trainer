@@ -2118,6 +2118,16 @@ def api_train_prepare(payload: Dict[str, Any]):
         except Exception:
             bucket_reso_steps = None
 
+        # Cap overly large LoRA rank for given VRAM to avoid OOM
+        try:
+            vram_norm = str(vram).upper().replace('B','') if isinstance(vram, str) else str(vram)
+            cap_map = {"12G": 32, "16G": 64, "20G": 96, "24G": 128}
+            cap = cap_map.get(vram_norm)
+            if cap is not None and network_dim > cap:
+                network_dim = cap
+        except Exception:
+            pass
+
         # Decide sample prompts path ext
         sp_ext = 'txt'
         converted_sample_prompts = None
@@ -2573,6 +2583,8 @@ def api_train_start(payload: Dict[str, Any]):
     env_vars = dict(os.environ)
     env_vars["PYTHONIOENCODING"] = "utf-8"
     env_vars["LOG_LEVEL"] = "DEBUG"
+    # Reduce fragmentation-related OOMs per PyTorch docs
+    env_vars.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     venv_bin = (ROOT / "venv" / "bin")
     alt_env_bin = (ROOT / "env" / "bin")
     path_parts = []
