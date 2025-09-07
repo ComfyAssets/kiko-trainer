@@ -48,7 +48,10 @@ export async function generateCaptions(
   
   // Florence2 specific parameters
   if (config.modelType === 'florence2') {
-    formData.append('caption_style', config.style || '<DETAILED_CAPTION>');
+    // Map UI-friendly styles to Florence-2 task tokens
+    const style = (config.style || '').toLowerCase()
+    const task = style === 'brief' ? '<CAPTION>' : style === 'detailed' ? '<DETAILED_CAPTION>' : (config.style || '<DETAILED_CAPTION>')
+    formData.append('caption_style', task)
   }
   
   // Qwen VL specific parameters

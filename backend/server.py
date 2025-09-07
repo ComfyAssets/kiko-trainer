@@ -2021,7 +2021,11 @@ async def api_caption(
                 cap = outputs[0].strip()
 
             else:  # Florence2
-                prompt = caption_style or "<DETAILED_CAPTION>"
+                # Map human-friendly styles to Florence-2 tasks for robustness
+                if caption_style and caption_style.lower() in ("brief", "detailed"):
+                    prompt = "<CAPTION>" if caption_style.lower() == "brief" else "<DETAILED_CAPTION>"
+                else:
+                    prompt = caption_style or "<DETAILED_CAPTION>"
                 inputs = processor(
                     text=prompt, images=img, return_tensors="pt", do_rescale=False
                 ).to(device, torch_dtype)
