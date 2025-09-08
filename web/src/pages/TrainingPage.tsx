@@ -33,7 +33,12 @@
   const [vram, setVram] = React.useState('20GB')
   const [blocksToSwap, setBlocksToSwap] = React.useState<string>('auto') // 'auto' | 'off' | number string
   const [highVram, setHighVram] = React.useState<boolean>(false)
+  const [enableTB, setEnableTB] = React.useState<boolean>(false)
     const [lr, setLr] = React.useState('8e-4')
+    const [lrPreset, setLrPreset] = React.useState<string>(() => {
+      const presets = new Set(['8e-4','5e-4','2e-4','1e-4'])
+      return presets.has('8e-4') ? '8e-4' : 'custom'
+    })
     const [dim, setDim] = React.useState(4)
     const [epochs, setEpochs] = React.useState(16)
     const [saveEvery, setSaveEvery] = React.useState(4)
@@ -51,6 +56,8 @@
   const [showLossChart, setShowLossChart] = React.useState(false)
   const [activeOutputName, setActiveOutputName] = React.useState<string>('')
   const [viewer, setViewer] = React.useState<{ images: string[], index: number } | null>(null)
+  const [showSamples, setShowSamples] = React.useState<boolean>(true)
+  const [metricsSource, setMetricsSource] = React.useState<'tensorboard'|'csv'|'none'>('none')
 
   const buildPromptsToml = React.useCallback(() => {
     const promptLines = (samples || '').split('\n').map(l=>l.trim()).filter(Boolean)
@@ -73,12 +80,17 @@
   const [networkAlpha, setNetworkAlpha] = React.useState<number | undefined>(undefined)
   const [rankDropout, setRankDropout] = React.useState<number | undefined>(undefined)
   const [moduleDropout, setModuleDropout] = React.useState<number | undefined>(undefined)
+  // Text Encoder training controls
+  const [trainClipL, setTrainClipL] = React.useState<boolean>(false)
+  const [trainT5, setTrainT5] = React.useState<boolean>(false)
+  const [teLr, setTeLr] = React.useState<string>('')
+  const [teWarmupSteps, setTeWarmupSteps] = React.useState<number>(0)
   // Bucketing (advanced)
   const [enableBucket, setEnableBucket] = React.useState<boolean>(true)
   const [bucketResoSteps, setBucketResoSteps] = React.useState<number>(64)
   const [minBucketReso, setMinBucketReso] = React.useState<number>(256)
   const [maxBucketReso, setMaxBucketReso] = React.useState<number>(1024)
-  const [bucketNoUpscale, setBucketNoUpscale] = React.useState<boolean>(false)
+  const [bucketNoUpscale, setBucketNoUpscale] = React.useState<boolean>(true)
   const [resizeInterpolation, setResizeInterpolation] = React.useState<string | undefined>(undefined)
 
   const sanitizeBucketStep = (v: number) => Math.max(64, Math.round((Number(v) || 64)/64)*64)
@@ -254,6 +266,19 @@ const trainingConfig = {
   const resizeRef = React.useRef<boolean>(false)
   React.useEffect(() => { try { localStorage.setItem('kiko.console.open', String(consoleOpen)) } catch {} }, [consoleOpen])
   React.useEffect(() => { try { localStorage.setItem('kiko.console.h', String(consoleHeight)) } catch {} }, [consoleHeight])
+  // When the bottom dock is open, prevent page scroll; allow scrolling only inside the dock
+  React.useEffect(() => {
+    const prev = document.body.style.overflow
+    if (consoleOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = prev || ''
+      document.body.style.removeProperty('overflow')
+    }
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [consoleOpen])
   React.useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!resizeRef.current) return
@@ -348,6 +373,7 @@ const trainingConfig = {
         fd.append('guidance_scale', String(guidance))
         fd.append('vram', String(vram))
         fd.append('high_vram', String(!!highVram))
+        fd.append('tensorboard', String(!!enableTB))
         fd.append('sample_prompts', preparedSamples)
         if (sampleSampler) fd.append('sample_sampler', String(sampleSampler))
         fd.append('sample_every_n_steps', String(sampleEvery))
@@ -355,6 +381,11 @@ const trainingConfig = {
         fd.append('num_repeats', String(numRepeats))
         fd.append('train_batch_size', String(batch))
         fd.append('dataset_folder', datasetFolder || '')
+        // Text Encoder training
+        fd.append('train_clip_l', String(!!trainClipL))
+        fd.append('train_t5xxl', String(!!trainT5))
+        if (teLr) fd.append('text_encoder_lr', String(teLr))
+        if (teWarmupSteps && teWarmupSteps > 0) fd.append('te_warmup_steps', String(teWarmupSteps))
         // advanced options (send when in advanced mode)
         if (isAdvanced) {
           if (lrScheduler) fd.append('lr_scheduler', String(lrScheduler))
@@ -400,6 +431,7 @@ const trainingConfig = {
           guidance_scale: guidance,
           vram,
           high_vram: !!highVram,
+          tensorboard: !!enableTB,
           sample_prompts: preparedSamples,
           sample_every_n_steps: sampleEvery,
           sample_sampler: sampleSampler,
@@ -408,6 +440,10 @@ const trainingConfig = {
           train_batch_size: batch,
           dataset_folder: datasetFolder || undefined,
           advanced_components: [],
+          train_clip_l: !!trainClipL,
+          train_t5xxl: !!trainT5,
+          text_encoder_lr: teLr || undefined,
+          te_warmup_steps: teWarmupSteps || undefined,
         }
         if (isAdvanced) {
           prepBody.lr_scheduler = lrScheduler
@@ -456,6 +492,10 @@ const trainingConfig = {
         }
         if (typeof prepData?.blocks_to_swap === 'number' && prepData.blocks_to_swap > 0) {
           toast?.(`Block swap enabled (${prepData.blocks_to_swap}) to reduce VRAM`, { icon: '🧠' })
+        }
+        if (typeof prepData?.mixed_precision === 'string') {
+          const mp = String(prepData.mixed_precision).toUpperCase()
+          toast?.success(`Mixed precision set to ${mp}`)
         }
       } catch {}
       const rid = prepData.run_id as string
@@ -768,6 +808,12 @@ const trainingConfig = {
             </CollapsibleSection>
 
             {/* Core training fields */}
+            <CollapsibleSection
+              title="Core Training"
+              className="p-4 rounded-md border border-zinc-800 space-y-4"
+              summary={`lr ${lr || (lrPreset!=='custom'?lrPreset:'custom')}, rank ${dim}, epochs ${epochs}`}
+              storageKey="kiko.core.training"
+            >
             <div className="grid grid-cols-2 gap-4">
               
             
@@ -783,13 +829,58 @@ const trainingConfig = {
                     </TooltipContent>
                   </Tooltip>
                 </Label>
-                <Select value={lr} onChange={e=>setLr(e.target.value)} options={[
-                  {value:'8e-4', label:'8e-4 (Very High, short runs)'},
-                  {value:'5e-4', label:'5e-4 (High)'},
-                  {value:'2e-4', label:'2e-4 (Balanced)'},
-                  {value:'1e-4', label:'1e-4 (Conservative)'},
-                ]}/>
-                <p className="text-xs text-gray-400 mt-1">Effective LR: {lr}</p>
+                <Select
+                  value={lrPreset}
+                  onChange={e=>{
+                    const v = String(e.target.value)
+                    setLrPreset(v)
+                    if (v !== 'custom') setLr(v)
+                  }}
+                  options={[
+                    {value:'8e-4', label:'8e-4 (Very High, short runs)'},
+                    {value:'5e-4', label:'5e-4 (High)'},
+                    {value:'2e-4', label:'2e-4 (Balanced)'},
+                    {value:'1e-4', label:'1e-4 (Conservative)'},
+                    {value:'custom', label:'Custom…'},
+                  ]}
+                />
+                {lrPreset === 'custom' && (
+                  <div className="mt-2 space-y-1">
+                    <Label className="flex items-center gap-2">
+                      Custom LR (decimal or scientific)
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>Enter values like 0.0002 or 2e-4.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Input
+                      type="text"
+                      value={lr}
+                      onChange={e=>setLr(e.target.value.trim())}
+                      placeholder="e.g., 2e-4 or 0.0002"
+                    />
+                    {(() => {
+                      const num = Number(lr)
+                      if (!isNaN(num) && lr !== '') {
+                        return (
+                          <div className="text-xs text-gray-400">
+                            <span className="mr-3">decimal: {num.toFixed(10)}</span>
+                            <span>scientific: {num.toExponential(2)}</span>
+                          </div>
+                        )
+                      }
+                      if (lr !== '' && isNaN(Number(lr))) {
+                        return <div className="text-xs text-red-400">Invalid number</div>
+                      }
+                      return null
+                    })()}
+                  </div>
+                )}
+                <p className="text-xs text-gray-400 mt-1">Effective LR: {lr || '(not set)'}</p>
               </div>
               <div>
                 <Label className="flex items-center gap-2">
@@ -961,8 +1052,8 @@ const trainingConfig = {
                 </Label>
                 <Input type="number" value={moduleDropout ?? 0} onChange={e=>setModuleDropout(Number(e.target.value))} step={0.01} min={0} max={1} />
               </div>)}
-              
-
+            </div>
+            </CollapsibleSection>
               {uiMode === 'advanced' && (
                 <CollapsibleSection title="Augmentations & Bucketing" subtitle="Dataset augmentations and resolution buckets for multi-aspect training." summary={augSummary} storageKey="kiko.advanced.aug_bucket" className="col-span-2 p-4 rounded-md border border-zinc-800 space-y-4">
                   <div className="grid grid-cols-2 gap-4">
@@ -1115,6 +1206,68 @@ const trainingConfig = {
                   </label>
                 </div>
               </div>
+              <div className="col-span-2 p-3 rounded border border-zinc-800">
+                <div className="font-medium mb-2">Text Encoder Training</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2">Train CLIP-L</Label>
+                    <Switch checked={!!trainClipL} onCheckedChange={setTrainClipL} />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2">Train T5-XXL</Label>
+                    <Switch checked={!!trainT5} onCheckedChange={setTrainT5} />
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="flex items-center gap-2">
+                      Text Encoder LR
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>Optional. Decimal or scientific (e.g., 1e-5). If empty, TE uses the main LR.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Input type="text" value={teLr} onChange={e=>setTeLr(e.target.value.trim())} placeholder="e.g., 1e-5" />
+                    {teLr && isNaN(Number(teLr)) && (<div className="text-xs text-red-400 mt-1">Invalid number</div>)}
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="flex items-center gap-2">
+                      TE Warmup Steps (auto-freeze)
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <p>Hint: 500–1000 steps so the UNet learns first, then the encoder updates slightly. Trains TE for N steps, then auto-freezes and continues UNet-only.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Input type="number" min={0} value={teWarmupSteps} onChange={e=>setTeWarmupSteps(Number(e.target.value))} placeholder="0 (off)" />
+                    {(trainClipL || trainT5) && (<div className="text-xs text-amber-400 mt-1">Note: Text encoder caching is disabled while TE is training and re-enabled after warmup.</div>)}
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label className="flex items-center gap-2">
+                  TensorBoard logs
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p>Enable sd-scripts TensorBoard logging. Writes events to outputs/[run]/tb. Our Loss chart prefers TB when available; otherwise it falls back to CSV.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </Label>
+                <div>
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={enableTB} onChange={e=>setEnableTB(e.target.checked)} />
+                    <span>Enable TensorBoard</span>
+                  </label>
+                </div>
+              </div>
               <div>
                 <Label className="flex items-center gap-2">
                   Block Swap (VRAM saver)
@@ -1135,9 +1288,8 @@ const trainingConfig = {
                   { value: '24', label: '24 blocks' },
                 ]} />
               </div>
-                </div>
+              </div>
               </CollapsibleSection>
-            </div>
           </CardContent>
         </Card>
 
@@ -1331,7 +1483,15 @@ const trainingConfig = {
                   setServerActiveRun(null)
                 }}>Resume</Button>
               )}
-              <Button size="sm" variant="outline" onClick={()=>setShowLossChart(v=>!v)}>Loss</Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={()=>setShowLossChart(v=>!v)}>Loss</Button>
+                {showLossChart && (
+                  <Button size="sm" variant="outline" onClick={()=>setShowSamples(v=>!v)}>{showSamples ? 'Hide Samples' : 'Show Samples'}</Button>
+                )}
+                {showLossChart && metricsSource !== 'none' && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border ${metricsSource==='tensorboard'?'border-purple-500 text-purple-300':'border-zinc-700 text-zinc-300'}`}>{metricsSource==='tensorboard'?'TB':'CSV'}</span>
+                )}
+              </div>
               <Button size="sm" variant="outline" onClick={()=>setTermLogs('')}>Clear</Button>
               <Button size="sm" variant="outline" onClick={stopTraining} disabled={!isTraining}>Stop</Button>
               <Button size="sm" variant="outline" onClick={()=>setConsoleOpen(!consoleOpen)}>{consoleOpen ? 'Minimize' : 'Show'}</Button>
@@ -1342,12 +1502,14 @@ const trainingConfig = {
               <div className="w-full h-full flex flex-col">
                 {showLossChart ? (
                   <div className="border-b border-zinc-800 p-2">
-                    <MetricsChart outputName={activeOutputName || loraName || ''} />
-                    <div className="mt-3">
-                      {activeOutputName && (
-                        <SampleGallery outputName={activeOutputName} onOpen={(images, index)=>setViewer({ images, index })} />
-                      )}
-                    </div>
+                    <MetricsChart outputName={activeOutputName || loraName || ''} onSourceChange={setMetricsSource} />
+                    {showSamples && (
+                      <div className="mt-3">
+                        {activeOutputName && (
+                          <SampleGallery outputName={activeOutputName} onOpen={(images, index)=>setViewer({ images, index })} />
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : null}
                 <pre className="flex-1 text-xs bg-black text-green-200 p-3 whitespace-pre-wrap overflow-auto">{termLogs}</pre>
