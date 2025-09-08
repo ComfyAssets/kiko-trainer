@@ -25,6 +25,7 @@ import random
 from contextlib import asynccontextmanager
 import re
 import csv
+import time as _time_for_metrics
 try:
     import psutil  # optional
 except Exception:
@@ -519,22 +520,135 @@ def _metrics_paths_for_output(name: str) -> tuple[str, str]:
     return f"{base}.csv", f"{base}.jsonl"
 
 
+def _find_tb_event_dir(tb_root: str) -> str | None:
+    """Find a TensorBoard event directory under tb_root.
+    sd-scripts often writes events under tb/<timestamp>/network_train.
+    This walks tb_root and returns the directory containing the most recent events.out.tfevents.* file.
+    """
+    try:
+        if not os.path.isdir(tb_root):
+            return None
+        latest: tuple[float, str] | None = None
+        for root, _dirs, files in os.walk(tb_root):
+            for fn in files:
+                if fn.startswith("events.out.tfevents"):
+                    full = os.path.join(root, fn)
+                    mt = os.path.getmtime(full)
+                    if latest is None or mt > latest[0]:
+                        latest = (mt, root)
+        return latest[1] if latest else None
+    except Exception:
+        return None
+
+
 @app.get("/api/metrics/recent")
-def api_metrics_recent(name: str, limit: int = 512):
+def api_metrics_recent(name: str, limit: int = 512, source: Optional[str] = None):
+    # Prefer TensorBoard if available
+    tb_dir = tu_resolve_path_without_quotes(f"outputs/{name}/tb") if tu_resolve_path_without_quotes else str((ROOT / 'outputs' / name / 'tb'))
+    if (source is None or source == 'tb') and os.path.isdir(tb_dir):
+        try:
+            from tensorboard.backend.event_processing import event_accumulator as _ea
+            ev_dir = _find_tb_event_dir(tb_dir) or tb_dir
+            ea = _ea.EventAccumulator(ev_dir)
+            ea.Reload()
+            # Heuristic tag selection for loss and lr
+            tags = ea.Tags()['scalars'] if 'scalars' in ea.Tags() else ea.Tags().get('scalars', [])
+            def pick_loss():
+                # Prefer raw loss
+                for t in ['loss/current','loss','training/loss']:
+                    if t in tags:
+                        return t
+                # Fallback to average loss
+                for t in ['loss/average','avr_loss']:
+                    if t in tags:
+                        return t
+                # Any loss-like tag
+                for t in tags:
+                    if 'loss' in t.lower():
+                        return t
+                return None
+            def pick_lr():
+                # Prefer unet LR if available, otherwise any lr/*, otherwise common names
+                for t in ['lr/unet','lr/textencoder']:
+                    if t in tags:
+                        return t
+                lr_tags = [t for t in tags if t.startswith('lr/')]
+                if lr_tags:
+                    return lr_tags[0]
+                for t in ['lr','learning_rate','training/lr']:
+                    if t in tags:
+                        return t
+                return None
+            loss_tag = pick_loss()
+            lr_tag = pick_lr()
+            steps = set()
+            items = []
+            if loss_tag:
+                for ev in ea.Scalars(loss_tag):
+                    items.append({'step': ev.step, 'avr_loss': float(ev.value), 'ts': ev.wall_time})
+                    steps.add(ev.step)
+            if lr_tag:
+                lrmap = {ev.step: float(ev.value) for ev in ea.Scalars(lr_tag)}
+                for it in items:
+                    if it['step'] in lrmap:
+                        it['lr'] = lrmap[it['step']]
+            items.sort(key=lambda x: x.get('step', 0))
+            if limit > 0:
+                items = items[-limit:]
+            # If TB returned no items, fall back to CSV automatically in Auto mode
+            if not items and source is None:
+                raise RuntimeError("no_tb_items")
+            return {'items': items, 'source': 'tensorboard'}
+        except ImportError:
+            # TensorBoard not installed; will fall back to CSV but return a hint
+            tb_missing = True
+        except Exception:
+            # Fall back to CSV below
+            tb_missing = False
+        # continue to CSV fallback
+    # CSV fallback (stdout parser or sd-scripts CSV)
     csv_path, _ = _metrics_paths_for_output(name)
+    if source == 'tb' and not os.path.isdir(tb_dir):
+        return {"items": [], "tb_unavailable": True}
     if not os.path.exists(csv_path):
-        return {"items": []}
+        # No CSV either; return empty, with hint if TB was missing
+        res = {"items": []}
+        try:
+            if 'tb_missing' in locals() and tb_missing:
+                res['tb_unavailable'] = True
+        except Exception:
+            pass
+        return res
     try:
         items: list[dict] = []
         with open(csv_path, "r", newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                items.append({k: (float(v) if (isinstance(v, str) and v.replace('.','',1).isdigit()) else v) for k, v in row.items()})
+                # best-effort parse
+                obj = {}
+                for k, v in row.items():
+                    try:
+                        obj[k] = float(v)
+                    except Exception:
+                        obj[k] = v
+                items.append(obj)
         if limit > 0:
             items = items[-limit:]
-        return {"items": items}
+        res = {"items": items, 'source': 'csv'}
+        try:
+            if 'tb_missing' in locals() and tb_missing:
+                res['tb_unavailable'] = True
+        except Exception:
+            pass
+        return res
     except Exception as e:
-        return {"items": [], "error": str(e)}
+        res = {"items": [], "error": str(e)}
+        try:
+            if 'tb_missing' in locals() and tb_missing:
+                res['tb_unavailable'] = True
+        except Exception:
+            pass
+        return res
 
 
 def _follow_jsonl(path: str):
@@ -554,7 +668,56 @@ def _follow_jsonl(path: str):
 
 
 @app.get("/api/metrics/stream")
-def api_metrics_stream(name: str):
+def api_metrics_stream(name: str, source: Optional[str] = None):
+    # Prefer TB polling stream if available
+    tb_dir = tu_resolve_path_without_quotes(f"outputs/{name}/tb") if tu_resolve_path_without_quotes else str((ROOT / 'outputs' / name / 'tb'))
+    if (source is None or source == 'tb') and os.path.isdir(tb_dir):
+        def _tb_stream():
+            last_step = -1
+            try:
+                from tensorboard.backend.event_processing import event_accumulator as _ea
+            except Exception:
+                # Inform client TB is unavailable, then fall back to JSONL
+                warn = json.dumps({"tb_unavailable": True})
+                yield f"data: {warn}\n\n"
+                yield from _follow_jsonl(_metrics_paths_for_output(name)[1])
+                return
+            while True:
+                try:
+                    ev_dir = _find_tb_event_dir(tb_dir) or tb_dir
+                    ea = _ea.EventAccumulator(ev_dir)
+                    ea.Reload()
+                    tags = ea.Tags().get('scalars', []) if hasattr(ea, 'Tags') else []
+                    # find loss-like tag (prefer raw)
+                    loss_tag = None
+                    for t in ['loss/current','loss','training/loss','loss/average','avr_loss']:
+                        if t in tags:
+                            loss_tag = t; break
+                    # find lr tag
+                    lr_tag = None
+                    for t in ['lr/unet','lr/textencoder']:
+                        if t in tags:
+                            lr_tag = t; break
+                    if not lr_tag:
+                        lr_list = [t for t in tags if t.startswith('lr/')]
+                        if lr_list:
+                            lr_tag = lr_list[0]
+                    if loss_tag:
+                        lrmap = {}
+                        if lr_tag:
+                            lrmap = {ev.step: float(ev.value) for ev in ea.Scalars(lr_tag)}
+                        for ev in ea.Scalars(loss_tag):
+                            if ev.step > last_step:
+                                obj = { 'step': ev.step, 'avr_loss': float(ev.value), 'ts': ev.wall_time }
+                                if ev.step in lrmap:
+                                    obj['lr'] = lrmap[ev.step]
+                                yield f"data: {json.dumps(obj)}\n\n"
+                                last_step = ev.step
+                except Exception:
+                    pass
+                time.sleep(1.0)
+        return StreamingResponse(_tb_stream(), media_type="text/event-stream")
+    # Fallback to JSONL tail (CSV source)
     _, jsonl_path = _metrics_paths_for_output(name)
     os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)
     if not os.path.exists(jsonl_path):
@@ -2226,6 +2389,16 @@ def api_train_prepare(payload: Dict[str, Any]):
         guidance_scale = float(payload.get("guidance_scale", 1.0))
         vram = payload.get("vram", "20G")
         force_highvram = bool(payload.get("high_vram", False))
+        enable_tensorboard = bool(payload.get("tensorboard", False))
+        # Text encoder training controls
+        train_clip_l = bool(payload.get("train_clip_l", False))
+        train_t5xxl = bool(payload.get("train_t5xxl", False))
+        text_encoder_lr = str(payload.get("text_encoder_lr")) if payload.get("text_encoder_lr") not in (None, "") else None
+        te_warmup_steps = payload.get("te_warmup_steps")
+        try:
+            te_warmup_steps = int(te_warmup_steps) if te_warmup_steps not in (None, "") else None
+        except Exception:
+            te_warmup_steps = None
         sample_prompts = payload.get("sample_prompts", "")
         sample_every_n_steps = int(payload.get("sample_every_n_steps", 0))
         class_tokens = payload.get("class_tokens", "")
@@ -2416,6 +2589,13 @@ def api_train_prepare(payload: Dict[str, Any]):
                 sp_ext = 'json'
         sp_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/sample_prompts.{sp_ext}")
 
+        # Decide mixed precision based on hardware support (bf16 preferred)
+        try:
+            mp = 'bf16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'fp16'
+        except Exception:
+            mp = 'bf16'
+
+        # Phase 1: possibly with TE training
         sh_text = tu_gen_sh(
             base_model,
             output_name,
@@ -2445,6 +2625,11 @@ def api_train_prepare(payload: Dict[str, Any]):
             sp_path,
             blocks_to_swap_override=eff_blocks_to_swap,
             force_highvram=force_highvram,
+            enable_tensorboard=enable_tensorboard,
+            train_clip_l=train_clip_l,
+            train_t5xxl=train_t5xxl,
+            text_encoder_lr=text_encoder_lr,
+            mixed_precision=mp,
         )
         dataset_folder = payload.get("dataset_folder") or f"datasets/{output_name}"
         toml_text = tu_gen_toml(
@@ -2480,7 +2665,7 @@ def api_train_prepare(payload: Dict[str, Any]):
                 f.write(sample_prompts)
 
         run_id = str(uuid.uuid4())
-        RUNS[run_id] = {
+        run_info = {
             "status": "prepared",
             "logs": [],
             "output_name": output_name,
@@ -2488,6 +2673,50 @@ def api_train_prepare(payload: Dict[str, Any]):
             "sh_path": sh_path,
             "pretrained_path": pretrained_path,
         }
+        # Prepare phase 2 (UNet-only) if TE warmup requested
+        if (train_clip_l or train_t5xxl) and te_warmup_steps and te_warmup_steps > 0:
+            sh2_text = tu_gen_sh(
+                base_model,
+                output_name,
+                resolution,
+                seed,
+                workers,
+                learning_rate,
+                network_dim,
+                network_alpha,
+                max_train_epochs,
+                save_every_n_epochs,
+                timestep_sampling,
+                guidance_scale,
+                vram,
+                sample_prompts,
+                sample_every_n_steps,
+                advanced_flags,
+                lr_scheduler,
+                lr_warmup_steps,
+                noise_offset,
+                network_dropout,
+                rank_dropout,
+                module_dropout,
+                pretrained_path,
+                payload.get('sample_sampler'),
+                sp_path,
+                blocks_to_swap_override=eff_blocks_to_swap,
+                force_highvram=force_highvram,
+                enable_tensorboard=enable_tensorboard,
+                train_clip_l=False,
+                train_t5xxl=False,
+                text_encoder_lr=None,
+            )
+            sh2_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/train_phase2.sh")
+            with open(sh2_path, "w", encoding="utf-8") as f2:
+                f2.write(sh2_text)
+            run_info.update({
+                "te_phase": 1,
+                "te_warmup_steps": te_warmup_steps,
+                "phase2_sh_path": sh2_path,
+            })
+        RUNS[run_id] = run_info
         return {
             "ok": True,
             "run_id": run_id,
@@ -2495,6 +2724,7 @@ def api_train_prepare(payload: Dict[str, Any]):
             "sh_path": sh_path,
             "script": sh_text,
             "dataset": toml_text,
+            "mixed_precision": mp,
             "effective_network_dim": effective_network_dim,
             "blocks_to_swap": eff_blocks_to_swap or 0,
         }
@@ -2523,6 +2753,7 @@ async def api_train_prepare_upload(
     guidance_scale: float = Form(1.0),
     vram: str = Form("20G"),
     high_vram: Optional[bool] = Form(False),
+    tensorboard: Optional[bool] = Form(False),
     sample_prompts: str = Form(""),
     sample_every_n_steps: int = Form(0),
     sample_sampler: Optional[str] = Form(None),
@@ -2576,7 +2807,9 @@ async def api_train_prepare_upload(
                 cap_text = ''
                 if idx < len(caps):
                     cap_text = str(caps[idx] or '')
-                full_caption = f"{class_tokens} {cap_text}".strip()
+                ct = (class_tokens or '').strip().strip(',')
+                prefix = f"{ct}, " if ct else ''
+                full_caption = f"{prefix}{cap_text}".strip()
                 with open(out_path.with_suffix('.txt'), 'w') as tf:
                     tf.write(full_caption)
 
@@ -2651,6 +2884,7 @@ async def api_train_prepare_upload(
             "guidance_scale": guidance_scale,
             "vram": vram,
             "high_vram": bool(high_vram),
+            "tensorboard": bool(tensorboard),
             "sample_prompts": sample_prompts,
             "sample_every_n_steps": sample_every_n_steps,
             "class_tokens": class_tokens,
@@ -2714,12 +2948,73 @@ async def api_train_prepare_upload(
 
 def _stream_process(proc: subprocess.Popen, run_id: str):
     try:
-        # Read text lines until EOF
-        for line in iter(proc.stdout.readline, ""):
-            RUNS[run_id]["logs"].append(line)
-        proc.wait()
-        code = proc.returncode
-        RUNS[run_id]["status"] = "finished" if code == 0 else f"error:{code}"
+        # Support optional TE warmup two-phase switch
+        warmup_steps = RUNS.get(run_id, {}).get("te_warmup_steps")
+        phase = RUNS.get(run_id, {}).get("te_phase", None)
+        def _launch_phase2():
+            sh2 = RUNS.get(run_id, {}).get("phase2_sh_path")
+            if not sh2:
+                return None
+            env_vars = dict(os.environ)
+            env_vars["PYTHONIOENCODING"] = "utf-8"
+            env_vars["LOG_LEVEL"] = "DEBUG"
+            env_vars.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            cmd2 = sh2 if os.name == "nt" else f'bash "{sh2}"'
+            p2 = subprocess.Popen(
+                cmd2,
+                cwd=str(ROOT),
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                env=env_vars,
+                bufsize=1,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                start_new_session=True,
+            )
+            RUNS[run_id]["proc"] = p2
+            RUNS[run_id]["te_phase"] = 2
+            return p2
+
+        current_proc = proc
+        cur_step = 0
+        while True:
+            for line in iter(current_proc.stdout.readline, ""):
+                RUNS[run_id]["logs"].append(line)
+                try:
+                    _maybe_parse_and_log_metric_line(run_id, line)
+                except Exception:
+                    pass
+                # parse step for warmup switch
+                m = _RE_PROGRESS.search(line)
+                if m:
+                    try:
+                        cur_step = int(m.group("cur"))
+                    except Exception:
+                        pass
+                if warmup_steps and phase == 1 and cur_step >= warmup_steps:
+                    try:
+                        # stop phase 1
+                        if os.name != "nt":
+                            import signal
+                            os.killpg(os.getpgid(current_proc.pid), signal.SIGTERM)
+                        else:
+                            current_proc.terminate()
+                    except Exception:
+                        pass
+                    # launch phase 2
+                    nxt = _launch_phase2()
+                    if nxt is None:
+                        break
+                    current_proc = nxt
+                    warmup_steps = None  # avoid re-trigger
+                    phase = 2
+                    break
+            current_proc.wait()
+            code = current_proc.returncode
+            RUNS[run_id]["status"] = "finished" if code == 0 else f"error:{code}"
+            break
     except Exception as e:
         RUNS[run_id]["status"] = f"error:{e}"
 
@@ -2837,6 +3132,50 @@ def api_train_active():
                 "started_at": info.get("started_at"),
             })
     return {"ok": True, "runs": runs}
+
+# --- metrics parsing from stdout (patchless fallback) ---
+_RE_PROGRESS = re.compile(r"(?P<cur>\d+)\s*/\s*(?P<total>\d+).+?avr_loss=(?P<loss>[0-9]*\.?[0-9]+)")
+
+
+def _maybe_parse_and_log_metric_line(run_id: str, line: str):
+    info = RUNS.get(run_id) or {}
+    out_name = info.get("output_name")
+    if not out_name:
+        return
+    m = _RE_PROGRESS.search(line)
+    if not m:
+        return
+    try:
+        step = int(m.group("cur"))
+        total = int(m.group("total"))
+        avr_loss = float(m.group("loss"))
+    except Exception:
+        return
+
+    csv_path, jsonl_path = _metrics_paths_for_output(out_name)
+    rec = {
+        "step": step,
+        "total": total,
+        "avr_loss": avr_loss,
+        "ts": _time_for_metrics.time(),
+    }
+    # write jsonl
+    try:
+        os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)
+        with open(jsonl_path, "a", encoding="utf-8") as jf:
+            jf.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # write/update csv with header
+    try:
+        need_header = not os.path.exists(csv_path)
+        with open(csv_path, "a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rec.keys()))
+            if need_header:
+                w.writeheader()
+            w.writerow(rec)
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     import uvicorn
