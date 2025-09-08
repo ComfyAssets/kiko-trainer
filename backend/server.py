@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any, List
 import httpx
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -23,6 +24,7 @@ import time
 import random
 from contextlib import asynccontextmanager
 import re
+import csv
 try:
     import psutil  # optional
 except Exception:
@@ -54,6 +56,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class _AddStaticCORSHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        try:
+            # Ensure CORS headers on static assets as well
+            response.headers.setdefault("Access-Control-Allow-Origin", "*")
+            response.headers.setdefault("Access-Control-Allow-Methods", "*")
+            response.headers.setdefault("Access-Control-Allow-Headers", "*")
+        except Exception:
+            pass
+        return response
+
+# Add a permissive header middleware to cover StaticFiles responses too
+app.add_middleware(_AddStaticCORSHeadersMiddleware)
 
 # Download tracking
 downloads: Dict[str, Dict[str, Any]] = {}
@@ -491,6 +508,58 @@ def load_qwen_model(
         )
 
     return model, processor
+
+# ---------------------------
+# Metrics endpoints (recent + SSE)
+# ---------------------------
+
+def _metrics_paths_for_output(name: str) -> tuple[str, str]:
+    out_dir = tu_resolve_path_without_quotes(f"outputs/{name}") if tu_resolve_path_without_quotes else str((ROOT / 'outputs' / name))
+    base = os.path.join(out_dir, f"{name}_metrics")
+    return f"{base}.csv", f"{base}.jsonl"
+
+
+@app.get("/api/metrics/recent")
+def api_metrics_recent(name: str, limit: int = 512):
+    csv_path, _ = _metrics_paths_for_output(name)
+    if not os.path.exists(csv_path):
+        return {"items": []}
+    try:
+        items: list[dict] = []
+        with open(csv_path, "r", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                items.append({k: (float(v) if (isinstance(v, str) and v.replace('.','',1).isdigit()) else v) for k, v in row.items()})
+        if limit > 0:
+            items = items[-limit:]
+        return {"items": items}
+    except Exception as e:
+        return {"items": [], "error": str(e)}
+
+
+def _follow_jsonl(path: str):
+    while not os.path.exists(path):
+        time.sleep(0.25)
+    with open(path, "r", encoding="utf-8") as f:
+        f.seek(0, os.SEEK_END)
+        while True:
+            line = f.readline()
+            if not line:
+                time.sleep(0.2)
+                continue
+            line = line.strip()
+            if not line:
+                continue
+            yield f"data: {line}\n\n"
+
+
+@app.get("/api/metrics/stream")
+def api_metrics_stream(name: str):
+    _, jsonl_path = _metrics_paths_for_output(name)
+    os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)
+    if not os.path.exists(jsonl_path):
+        open(jsonl_path, 'a', encoding='utf-8').close()
+    return StreamingResponse(_follow_jsonl(jsonl_path), media_type="text/event-stream")
 
 class CivitAIDownloadRequest(BaseModel):
     url: str
