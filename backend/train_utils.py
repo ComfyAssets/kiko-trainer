@@ -112,6 +112,11 @@ def gen_sh(
     sample_prompts_path_override: str | None = None,
     blocks_to_swap_override: int | None = None,
     force_highvram: bool = False,
+    enable_tensorboard: bool = False,
+    train_clip_l: bool | None = None,
+    train_t5xxl: bool | None = None,
+    text_encoder_lr: str | None = None,
+    mixed_precision: str | None = None,
 ):
     output_dir = resolve_path(f"outputs/{output_name}")
     sample_prompts_path = sample_prompts_path_override or resolve_path(f"outputs/{output_name}/sample_prompts.txt")
@@ -191,8 +196,11 @@ def gen_sh(
 
     # Build argument list and join with proper continuations
     args: list[str] = []
+    mp = (mixed_precision or 'bf16').lower()
+    if mp not in ('bf16','fp16'):
+        mp = 'bf16'
     args.append("accelerate launch")
-    args.append("--mixed_precision bf16")
+    args.append(f"--mixed_precision {mp}")
     args.append("--num_cpu_threads_per_process 1")
     args.append("sd-scripts/flux_train_network.py")
     args.append(f"--pretrained_model_name_or_path {pretrained_model_path}")
@@ -206,7 +214,8 @@ def gen_sh(
     args.append(f"--max_data_loader_n_workers {workers}")
     args.append(f"--seed {seed}")
     args.append("--gradient_checkpointing")
-    args.append("--mixed_precision bf16")
+    # sd-scripts expects mixed_precision as a script arg as well
+    args.append(f"--mixed_precision {mp}")
     args.append("--save_precision bf16")
     args.append("--network_module networks.lora_flux")
     args.append(f"--network_dim {network_dim}")
@@ -221,8 +230,11 @@ def gen_sh(
         args.append(f"--lr_scheduler {lr_scheduler}")
     if lr_warmup_steps is not None:
         args.append(f"--lr_warmup_steps {lr_warmup_steps}")
-    args.append("--cache_text_encoder_outputs")
-    args.append("--cache_text_encoder_outputs_to_disk")
+    # Text encoder caching cannot be used when training any TE
+    train_any_te = bool(train_clip_l) or bool(train_t5xxl)
+    if not train_any_te:
+        args.append("--cache_text_encoder_outputs")
+        args.append("--cache_text_encoder_outputs_to_disk")
     args.append("--fp8_base")
     # High VRAM mode: force residency if requested; otherwise apply heuristics
     should_highvram = bool(force_highvram) or (vram == "24G" or vram not in ("12G", "16G", "20G"))
@@ -238,6 +250,26 @@ def gen_sh(
             eff_blocks_to_swap = 18  # default swap on 20G; leave 24G unswapped by default
     if eff_blocks_to_swap is not None:
         args.append(f"--blocks_to_swap {eff_blocks_to_swap}")
+
+    # TensorBoard logging (no sd-scripts patch required)
+    if enable_tensorboard:
+        tb_dir = resolve_path_without_quotes(f"outputs/{output_name}/tb")
+        args.append(f"--logging_dir {resolve_path(f'outputs/{output_name}/tb')}")
+        args.append("--log_with tensorboard")
+
+    # Text encoder training flags
+    if train_any_te:
+        # If not training CLIP-L, use unet_only flag to exclude TE modules
+        if not train_clip_l and not train_t5xxl:
+            args.append("--network_train_unet_only")
+        # Flux T5 requires explicit network arg
+        if train_t5xxl:
+            args.append("--network_args \"train_t5xxl=True\"")
+        if text_encoder_lr:
+            args.append(f"--text_encoder_lr {text_encoder_lr}")
+    else:
+        # Explicitly train UNet only if neither TE is to be trained
+        args.append("--network_train_unet_only")
     args.append(f"--max_train_epochs {max_train_epochs}")
     args.append(f"--save_every_n_epochs {save_every_n_epochs}")
     args.append(f"--dataset_config {resolve_path(f'outputs/{output_name}/dataset.toml')}")
@@ -313,7 +345,10 @@ def gen_toml(
     lines.append('')
     lines.append('[[datasets.subsets]]')
     lines.append(f"image_dir = '{resolve_path_without_quotes(dataset_folder)}'")
-    lines.append(f"class_tokens = '{class_tokens}'")
+    if class_tokens:
+        ct = str(class_tokens).strip().strip(',')
+        if ct:
+            lines.append(f"class_tokens = '{ct}'")
     lines.append(f'num_repeats = {num_repeats}')
     lines.append(f'flip_aug = {str(bool(flip_aug)).lower()}')
 
