@@ -11,6 +11,7 @@ torchvision>=0.23.0
 timm
 einops
 accelerate
+tensorboard
 
 # Image processing
 Pillow
