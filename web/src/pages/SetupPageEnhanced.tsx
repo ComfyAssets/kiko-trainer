@@ -329,9 +329,9 @@ export function SetupPageEnhanced() {
                 onChange={(e) => {
                   const v = e.target.value
                   setTrigger(v)
-                  const withComma = v && !v.endsWith(',') ? `${v},` : v
-                  setContextClassTokens(withComma)
-                  try { localStorage.setItem('kiko.classTokens', withComma) } catch {}
+                  // Store clean trigger without trailing comma for dataset class_tokens
+                  setContextClassTokens(v)
+                  try { localStorage.setItem('kiko.classTokens', v) } catch {}
                 }}
               />
             </div>
