@@ -11,6 +11,8 @@
   import { Switch } from '../components/ui/switch'
   import { CollapsibleSection } from '../components/CollapsibleSection'
   import { Play, FileText, FileJson, HelpCircle, Image, ChevronDown } from 'lucide-react'
+  import MetricsChart from '../components/MetricsChart'
+  import { ImageViewer } from '../components/ImageViewer'
   import {
     Tooltip,
     TooltipContent,
@@ -21,6 +23,7 @@
   import { useTraining } from '../contexts/TrainingContext'
   import { apiUrl } from '../config/api'
   import { useStore } from '../store/useStore'
+  import SampleGallery from '../components/SampleGallery'
 
   export function TrainingPage() {
     // Get values from context (set in Setup page)
@@ -45,6 +48,9 @@
   const [sampleSteps, setSampleSteps] = React.useState<number>(20)
   const [sampleSampler, setSampleSampler] = React.useState<string>('ddim')
   const [openPrompts, setOpenPrompts] = React.useState(false)
+  const [showLossChart, setShowLossChart] = React.useState(false)
+  const [activeOutputName, setActiveOutputName] = React.useState<string>('')
+  const [viewer, setViewer] = React.useState<{ images: string[], index: number } | null>(null)
 
   const buildPromptsToml = React.useCallback(() => {
     const promptLines = (samples || '').split('\n').map(l=>l.trim()).filter(Boolean)
@@ -236,7 +242,7 @@ const trainingConfig = {
   const logsTimer = React.useRef<number | null>(null)
   const [metrics, setMetrics] = React.useState<any>(null)
   const metricsTimer = React.useRef<number | null>(null)
-  const [serverActiveRun, setServerActiveRun] = React.useState<{ run_id: string, status: string } | null>(null)
+  const [serverActiveRun, setServerActiveRun] = React.useState<{ run_id: string, status: string, output_name?: string } | null>(null)
 
   // Bottom dock for Training Output
   const [consoleOpen, setConsoleOpen] = React.useState<boolean>(() => {
@@ -453,6 +459,7 @@ const trainingConfig = {
         }
       } catch {}
       const rid = prepData.run_id as string
+      if (prepData.output_name) setActiveOutputName(prepData.output_name)
       setRunId(rid)
       pollLogs(rid)
 
@@ -502,9 +509,13 @@ const trainingConfig = {
         if (res.ok) {
           const data = await res.json()
           const runs = (data?.runs || []) as any[]
-          if (!rid && runs.length > 0) {
-            // Pick the first active run
-            setServerActiveRun({ run_id: runs[0].run_id, status: runs[0].status })
+          if (runs.length > 0) {
+            // If we have a remembered run, match it; else pick first
+            const match = rid ? runs.find((r:any)=>r.run_id===rid) : runs[0]
+            if (match) {
+              setServerActiveRun({ run_id: match.run_id, status: match.status, output_name: match.output_name })
+              if (!activeOutputName && match.output_name) setActiveOutputName(match.output_name)
+            }
           }
         }
       } catch {}
@@ -1313,10 +1324,14 @@ const trainingConfig = {
                   setIsTraining(true)
                   pollLogs(rid)
                   pollMetrics()
+                  // Prefer server-provided output name; fallback to current loraName
+                  if (serverActiveRun.output_name) setActiveOutputName(serverActiveRun.output_name)
+                  else if (!activeOutputName && loraName) setActiveOutputName(loraName)
                   try { localStorage.setItem('active_run_id', rid) } catch {}
                   setServerActiveRun(null)
                 }}>Resume</Button>
               )}
+              <Button size="sm" variant="outline" onClick={()=>setShowLossChart(v=>!v)}>Loss</Button>
               <Button size="sm" variant="outline" onClick={()=>setTermLogs('')}>Clear</Button>
               <Button size="sm" variant="outline" onClick={stopTraining} disabled={!isTraining}>Stop</Button>
               <Button size="sm" variant="outline" onClick={()=>setConsoleOpen(!consoleOpen)}>{consoleOpen ? 'Minimize' : 'Show'}</Button>
@@ -1324,11 +1339,29 @@ const trainingConfig = {
           </div>
           {consoleOpen && (
             <div className="flex-1 overflow-hidden flex">
-              <pre className="w-full text-xs bg-black text-green-200 p-3 whitespace-pre-wrap overflow-auto">{termLogs}</pre>
+              <div className="w-full h-full flex flex-col">
+                {showLossChart ? (
+                  <div className="border-b border-zinc-800 p-2">
+                    <MetricsChart outputName={activeOutputName || loraName || ''} />
+                    <div className="mt-3">
+                      {activeOutputName && (
+                        <SampleGallery outputName={activeOutputName} onOpen={(images, index)=>setViewer({ images, index })} />
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+                <pre className="flex-1 text-xs bg-black text-green-200 p-3 whitespace-pre-wrap overflow-auto">{termLogs}</pre>
+              </div>
             </div>
           )}
         </div>
       </div>
+      {/* Image viewer modal (reuse-style) */}
+      <Dialog open={!!viewer} onOpenChange={(open)=>!open && setViewer(null)} title={activeOutputName || 'Preview'}>
+        {viewer && (
+          <ImageViewer images={viewer.images} index={viewer.index} name={activeOutputName} onClose={() => setViewer(null)} />
+        )}
+      </Dialog>
     </TooltipProvider>
   )
 }
