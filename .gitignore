@@ -8,6 +8,7 @@ __pycache__/
 .claude/
 AGENTS.md
 AGENTS/
+CLAUDE.md
 
 # Runtime data
 datasets/
