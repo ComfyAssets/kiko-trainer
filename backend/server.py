@@ -2362,6 +2362,9 @@ def api_train_prepare(payload: Dict[str, Any]):
         output_name = lora_name
         resolution = int(payload.get("resolution", 512))
         seed = int(payload.get("seed", 42))
+        # Ensure seed is within numpy's valid range (0 to 2^32 - 1)
+        if seed < 0 or seed > 4294967295:
+            seed = seed % 4294967296  # Wrap to valid range
         workers = int(payload.get("workers", 2))
         learning_rate = str(payload.get("learning_rate", "8e-4"))
         network_dim = int(payload.get("network_dim", 4))
@@ -2453,7 +2456,7 @@ def api_train_prepare(payload: Dict[str, Any]):
                 if vram_norm == "20G":
                     eff_blocks_to_swap = 18  # default on 20G
                 elif vram_norm == "24G":
-                    eff_blocks_to_swap = None  # default off on 24G to use more VRAM
+                    eff_blocks_to_swap = 12  # default on 24G for memory optimization
         except Exception:
             pass
 
@@ -2635,10 +2638,33 @@ def api_train_prepare(payload: Dict[str, Any]):
             mixed_precision=mp,
         )
         dataset_folder = payload.get("dataset_folder") or f"datasets/{output_name}"
+        
+        # Check if individual caption files exist - if so, don't use class_tokens
+        dataset_abs_path = tu_resolve_path_without_quotes(dataset_folder)
+        has_individual_captions = False
+        print(f"[DEBUG] Checking for caption files in: {dataset_abs_path}")
+        try:
+            import os
+            if os.path.exists(dataset_abs_path):
+                txt_files = [f for f in os.listdir(dataset_abs_path) if f.endswith('.txt')]
+                print(f"[DEBUG] Found {len(txt_files)} .txt files: {txt_files[:5]}{'...' if len(txt_files) > 5 else ''}")
+                has_individual_captions = len(txt_files) > 0
+            else:
+                print(f"[DEBUG] Dataset path does not exist: {dataset_abs_path}")
+        except Exception as e:
+            print(f"[DEBUG] Exception checking for caption files: {e}")
+        
+        print(f"[DEBUG] has_individual_captions: {has_individual_captions}")
+        print(f"[DEBUG] class_tokens input: '{class_tokens}'")
+        
+        # Only use class_tokens if no individual captions exist
+        effective_class_tokens = None if has_individual_captions else class_tokens
+        print(f"[DEBUG] effective_class_tokens: {effective_class_tokens}")
+        
         toml_text = tu_gen_toml(
             dataset_folder,
             resolution,
-            class_tokens,
+            effective_class_tokens,
             num_repeats,
             train_batch_size,
             flip_aug,
@@ -2810,9 +2836,15 @@ async def api_train_prepare_upload(
                 cap_text = ''
                 if idx < len(caps):
                     cap_text = str(caps[idx] or '')
-                ct = (class_tokens or '').strip().strip(',')
-                prefix = f"{ct}, " if ct else ''
-                full_caption = f"{prefix}{cap_text}".strip()
+                
+                # Only use class_tokens when there's no individual caption
+                if cap_text.strip():
+                    # Individual caption exists, don't use class_tokens
+                    full_caption = cap_text.strip()
+                else:
+                    # No individual caption, use class_tokens
+                    ct = (class_tokens or '').strip().strip(',')
+                    full_caption = ct if ct else ''
                 with open(out_path.with_suffix('.txt'), 'w') as tf:
                     tf.write(full_caption)
 
@@ -2869,6 +2901,10 @@ async def api_train_prepare_upload(
                 sp_ext = 'json'
         sp_path = tu_resolve_path_without_quotes(f"outputs/{lora_name}/sample_prompts.{sp_ext}")
 
+        # Ensure seed is within numpy's valid range (0 to 2^32 - 1)
+        if seed < 0 or seed > 4294967295:
+            seed = seed % 4294967296  # Wrap to valid range
+            
         # Build payload
         payload = {
             "base_model": base_model,
