@@ -28,21 +28,18 @@ interface TrainingConfig {
   resizeInterpolation?: string | undefined
 }
 
+import { PATHS_CONFIG, resolveUnetPath } from '../config/paths'
+
 export function generateTrainingScript(config: TrainingConfig): string {
   const lineBreak = '\\'
-  const outputDir = `/home/vito/ai-apps/kiko-trainer/outputs/${config.loraName}`
+  const outputDir = `${PATHS_CONFIG.outputsDir}/${config.loraName}`
   const samplePromptsPath = `${outputDir}/sample_prompts.txt`
   
-  // Model paths - adjust these based on your setup
-  const modelPaths = {
-    'FLUX.1-dev': '/home/vito/ai-apps/kiko-trainer/models/unet/flux1-dev.sft',
-    'FLUX.1-schnell': '/home/vito/ai-apps/kiko-trainer/models/unet/flux1-schnell.sft'
-  }
-  
-  const modelPath = config.pretrainedPath || modelPaths[config.baseModel as keyof typeof modelPaths] || modelPaths['FLUX.1-dev']
-  const clipPath = '/home/vito/ai-apps/kiko-trainer/models/clip/clip_l.safetensors'
-  const t5Path = '/home/vito/ai-apps/kiko-trainer/models/clip/t5xxl_fp16.safetensors'
-  const aePath = '/home/vito/ai-apps/kiko-trainer/models/vae/ae.sft'
+  // Resolve model component paths from env-configured roots
+  const modelPath = resolveUnetPath(config.baseModel, config.pretrainedPath)
+  const clipPath = PATHS_CONFIG.clipL
+  const t5Path = PATHS_CONFIG.t5xxl
+  const aePath = PATHS_CONFIG.ae
 
   // Sample generation
   let sampleConfig = ''
