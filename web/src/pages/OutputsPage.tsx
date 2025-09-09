@@ -37,6 +37,17 @@ export function OutputsPage() {
 
   React.useEffect(() => { loadRuns() }, [])
 
+  // Lock background scroll when image viewer is open
+  React.useEffect(() => {
+    if (!viewer) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev || ''
+      document.body.style.removeProperty('overflow')
+    }
+  }, [viewer])
+
   const deleteRun = async (name: string) => {
     if (!confirm(`Delete output '${name}'? This cannot be undone.`)) return
     try {
@@ -234,6 +245,7 @@ function ViewerContent({ viewer, setViewer }: { viewer: { name: string, images: 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft') { e.preventDefault(); prev() }
       if (e.key === 'ArrowRight') { e.preventDefault(); next() }
+      if (e.key === 'Escape') { e.preventDefault(); setViewer(null) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
