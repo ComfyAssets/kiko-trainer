@@ -68,7 +68,6 @@ export default function MetricsChart({ outputName, onSourceChange }: Props) {
   const [srcActive, setSrcActive] = useState<"tensorboard" | "csv" | "none">(
     "none",
   );
-  const [debug, setDebug] = useState<boolean>(true);
   const [lockLoss01, setLockLoss01] = useState<boolean>(false); // optional fixed 0–1 scale
 
   const lrMapRef = useRef<Record<number, number>>({});
@@ -210,7 +209,7 @@ export default function MetricsChart({ outputName, onSourceChange }: Props) {
       }
       try {
         const obj = JSON.parse(ev.data);
-        if (debug && Math.random() < 0.02) {
+        if (Math.random() < 0.02) {
           console.debug("[SSE] sample message:", obj);
         }
 
@@ -242,13 +241,13 @@ export default function MetricsChart({ outputName, onSourceChange }: Props) {
         const hasAnyY =
           typeof obj.loss === "number" || typeof obj.avr_loss === "number";
         if (!hasAnyX && !hasAnyY) {
-          if (debug) console.debug("[SSE] drop: no x and no y", obj);
+          // console.debug("[SSE] drop: no x and no y", obj);
           return;
         }
 
         setData((prev) => {
           const next = [...prev, obj];
-          if (next.length > 4096 && debug)
+          if (next.length > 4096)
             console.debug("[data] trimming buffer", next.length, "->", 2048);
           return next.slice(Math.max(0, next.length - 2048));
         });
@@ -297,7 +296,7 @@ export default function MetricsChart({ outputName, onSourceChange }: Props) {
       } catch {}
       esRef.current = null;
     };
-  }, [sseUrl, srcMode, debug]);
+  }, [sseUrl, srcMode]);
 
   // -------- Stable X + Debug accounting --------
   const analyzed = useMemo(() => {
@@ -490,118 +489,6 @@ export default function MetricsChart({ outputName, onSourceChange }: Props) {
       .join(" ");
   };
 
-  // -------- Debug helpers in UI --------
-  const debugSnapshot = () => {
-    console.groupCollapsed("[DEBUG SNAPSHOT]");
-    console.log("srcMode=", srcMode, "srcActive=", srcActive);
-    console.log(
-      "total incoming=",
-      analyzed.counters.totalIncoming,
-      "kept=",
-      analyzed.counters.kept,
-    );
-    console.log(
-      "drops: noY=",
-      analyzed.counters.droppedNoY,
-      "noX+noSynth=",
-      analyzed.counters.droppedNoXAndNoSynthetic,
-    );
-    console.log("xKinds=", analyzed.counters.xKinds);
-    console.log(
-      "zeros: x=",
-      analyzed.counters.zeroXCount,
-      "y=",
-      analyzed.counters.zeroYCount,
-      "dupsX=",
-      analyzed.counters.dupXCount,
-    );
-    console.log(
-      "nan: x=",
-      analyzed.counters.nanXCount,
-      "y=",
-      analyzed.counters.nanYCount,
-      "negX=",
-      analyzed.counters.negativeXCount,
-    );
-    console.log(
-      "axis raw: minX=",
-      analyzed.minX,
-      "maxX=",
-      analyzed.maxX,
-      "minY=",
-      analyzed.minY,
-      "maxY=",
-      analyzed.maxY,
-    );
-    console.log("axis displayed (computed):", {
-      minYL: lossAxis.min,
-      maxYL: lossAxis.max,
-      minYR: lrAxis.min,
-      maxYR: lrAxis.max,
-    });
-    console.log(
-      "displayed points (loss)=",
-      pointsLoss.length,
-      " (lr)=",
-      pointsLr.length,
-    );
-    console.log("last 3 displayed:", displayed.slice(-3));
-    console.groupEnd();
-  };
-
-  const dumpDisplayedCSV = () => {
-    const rows = displayed.map((d) => ({
-      x: d.x,
-      xKind: d.xKind,
-      step: d.step,
-      epoch: d.epoch,
-      ts: d.ts,
-      loss: d.loss,
-      avr_loss: d.avr_loss,
-      lr: d.lr,
-      grad_norm: d.grad_norm,
-    }));
-    download(`${outputName}-displayed.csv`, toCSV(rows));
-  };
-
-  const dumpRawCSV = () => {
-    const rows = data.map((d) => ({
-      step: d.step,
-      epoch: d.epoch,
-      ts: d.ts,
-      loss: d.loss,
-      avr_loss: d.avr_loss,
-      lr: d.lr,
-      grad_norm: d.grad_norm,
-    }));
-    download(`${outputName}-raw.csv`, toCSV(rows));
-  };
-
-  const debugBadge = (
-    <div className="text-[11px] leading-4 px-2 py-1 rounded border border-zinc-700 bg-black/40 text-zinc-300">
-      <div>
-        srcMode: <b>{srcMode}</b> / active: <b>{srcActive}</b>
-      </div>
-      <div>
-        incoming: {analyzed.counters.totalIncoming} kept:{" "}
-        {analyzed.counters.kept}
-      </div>
-      <div>
-        drops → noY: {analyzed.counters.droppedNoY}, noX+noSynth:{" "}
-        {analyzed.counters.droppedNoXAndNoSynthetic}
-      </div>
-      <div>
-        xKinds → step:{analyzed.counters.xKinds.step} epoch:
-        {analyzed.counters.xKinds.epoch} ts:{analyzed.counters.xKinds.ts} idx:
-        {analyzed.counters.xKinds.idx}
-      </div>
-      <div>
-        axis displayed → Loss[{lossAxis.min.toFixed(6)}..
-        {lossAxis.max.toFixed(6)}] LR[{lrAxis.min.toFixed(6)}..
-        {lrAxis.max.toFixed(6)}]
-      </div>
-    </div>
-  );
 
   return (
     <div className="w-full overflow-auto">
@@ -690,61 +577,9 @@ export default function MetricsChart({ outputName, onSourceChange }: Props) {
             />
           </div>
 
-          {/* Debug controls */}
-          <div className="ml-3 flex items-center gap-2">
-            <label title="Show debug counters">Debug</label>
-            <input
-              type="checkbox"
-              checked={debug}
-              onChange={(e) => setDebug(e.target.checked)}
-            />
-            <button
-              onClick={debugSnapshot}
-              className="px-2 py-0.5 border border-zinc-700 rounded hover:bg-zinc-800"
-            >
-              Console snapshot
-            </button>
-            <button
-              onClick={() => {
-                const rows = displayed.map((d) => ({
-                  x: d.x,
-                  xKind: d.xKind,
-                  step: d.step,
-                  epoch: d.epoch,
-                  ts: d.ts,
-                  loss: d.loss,
-                  avr_loss: d.avr_loss,
-                  lr: d.lr,
-                  grad_norm: d.grad_norm,
-                }));
-                download(`${outputName}-displayed.csv`, toCSV(rows));
-              }}
-              className="px-2 py-0.5 border border-zinc-700 rounded hover:bg-zinc-800"
-            >
-              Export displayed CSV
-            </button>
-            <button
-              onClick={() => {
-                const rows = data.map((d) => ({
-                  step: d.step,
-                  epoch: d.epoch,
-                  ts: d.ts,
-                  loss: d.loss,
-                  avr_loss: d.avr_loss,
-                  lr: d.lr,
-                  grad_norm: d.grad_norm,
-                }));
-                download(`${outputName}-raw.csv`, toCSV(rows));
-              }}
-              className="px-2 py-0.5 border border-zinc-700 rounded hover:bg-zinc-800"
-            >
-              Export raw CSV
-            </button>
-          </div>
         </div>
       </div>
 
-      {debug && <div className="mb-2">{debugBadge}</div>}
 
       {displayed.length === 0 && (
         <div className="w-full h-32 flex items-center justify-center text-xs text-zinc-400 border border-zinc-800 rounded bg-black/40 mb-2">
@@ -845,14 +680,6 @@ export default function MetricsChart({ outputName, onSourceChange }: Props) {
         </text>
       </svg>
 
-      {debug && displayed.length > 0 && (
-        <div className="mt-2 text-[11px] text-zinc-300">
-          <div className="mb-1">Last samples:</div>
-          <pre className="max-h-48 overflow-auto bg-black/50 border border-zinc-800 rounded p-2">
-            {JSON.stringify(displayed.slice(-5), null, 2)}
-          </pre>
-        </div>
-      )}
     </div>
   );
 }
