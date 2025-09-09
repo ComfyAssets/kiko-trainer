@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl } from "../config/api";
 
 type MetricPoint = {
@@ -232,7 +232,7 @@ export default function MetricsChartEnhanced({ outputName, onSourceChange }: Pro
     }
     
     const xValues = processedData.map(p => p.x);
-    const lossValues = processedData.map(p => p.smoothedLoss ?? p.loss);
+    const lossValues = processedData.map(p => (p as any).smoothedLoss ?? p.loss);
     const lrValues = processedData.filter(p => p.lr !== undefined).map(p => p.lr!);
     
     const xRange = [Math.min(...xValues), Math.max(...xValues)];
@@ -293,7 +293,7 @@ export default function MetricsChartEnhanced({ outputName, onSourceChange }: Pro
   );
   
   const smoothedPath = generatePath(
-    processedData.map(p => ({ x: p.x, y: p.smoothedLoss ?? p.loss })),
+    processedData.map(p => ({ x: p.x, y: (p as any).smoothedLoss ?? p.loss })),
     scaleLoss
   );
   

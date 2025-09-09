@@ -1,4 +1,4 @@
-import * as React from 'react'
+// React import removed - not needed for modern React
 
 interface ProgressProps {
   value?: number

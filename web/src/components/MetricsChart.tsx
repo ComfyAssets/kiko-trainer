@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiUrl } from "../config/api";
 
 type Point = {
@@ -32,27 +32,27 @@ type DebugCounters = {
   xKinds: Record<XKind, number>;
 };
 
-function download(filename: string, text: string) {
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
+// function download(filename: string, text: string) { // unused
+//   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+//   const url = URL.createObjectURL(blob);
+//   const a = document.createElement("a");
+//   a.href = url;
+//   a.download = filename;
+//   document.body.appendChild(a);
+//   a.click();
+//   document.body.removeChild(a);
+//   URL.revokeObjectURL(url);
+// }
 
-function toCSV(rows: Record<string, any>[]) {
-  if (!rows.length) return "";
-  const keys = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
-  const header = keys.join(",");
-  const lines = rows.map((r) =>
-    keys.map((k) => JSON.stringify(r[k] ?? "")).join(","),
-  );
-  return [header, ...lines].join("\n");
-}
+// function toCSV(rows: Record<string, any>[]) { // unused
+//   if (!rows.length) return "";
+//   const keys = Array.from(new Set(rows.flatMap((r) => Object.keys(r))));
+//   const header = keys.join(",");
+//   const lines = rows.map((r) =>
+//     keys.map((k) => JSON.stringify(r[k] ?? "")).join(","),
+//   );
+//   return [header, ...lines].join("\n");
+// }
 
 export default function MetricsChart({ outputName, onSourceChange }: Props) {
   const [data, setData] = useState<Point[]>([]);
@@ -62,8 +62,8 @@ export default function MetricsChart({ outputName, onSourceChange }: Props) {
   const [smooth, setSmooth] = useState<number>(50);
   const [windowSize, setWindowSize] = useState<number>(512);
   const [useZoom, setUseZoom] = useState<boolean>(false);
-  const [zoomSpanPct, setZoomSpanPct] = useState<number>(100);
-  const [zoomStartPct, setZoomStartPct] = useState<number>(0);
+  const [zoomSpanPct] = useState<number>(100); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const [zoomStartPct] = useState<number>(0); // eslint-disable-line @typescript-eslint/no-unused-vars
   const [srcMode, setSrcMode] = useState<"auto" | "tb" | "csv">("auto");
   const [srcActive, setSrcActive] = useState<"tensorboard" | "csv" | "none">(
     "none",

@@ -1,5 +1,5 @@
 
-import React from 'react'
+// React import removed - not needed for modern React
 import clsx from 'classnames'
 
 type Tab = { value: string; label: string }

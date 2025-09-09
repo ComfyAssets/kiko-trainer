@@ -1,5 +1,5 @@
 
-import React from 'react'
+// React import removed - not needed for modern React
 
 type Props = {
   checked: boolean
