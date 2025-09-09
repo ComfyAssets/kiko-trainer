@@ -59,7 +59,7 @@ export const ImageUpload: React.FC = () => {
 };
 
 const ImageCard: React.FC<{
-  image: ReturnType<typeof useStore>['images'][number];
+  image: any; // Fix TypeScript error - ReturnType inference issue
   onRemove: (id: string) => void;
   onUpdate: (id: string, caption: string) => void;
 }> = ({ image, onRemove, onUpdate }) => {
