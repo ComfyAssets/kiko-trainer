@@ -32,7 +32,8 @@
     
     const [baseModel, setBaseModel] = React.useState('FLUX.1-dev')
   const [vram, setVram] = React.useState('24GB')
-  const [blocksToSwap, setBlocksToSwap] = React.useState<string>('auto') // 'auto' | 'off' | number string
+  const [blocksToSwap, setBlocksToSwap] = React.useState<string>('auto') // 'auto' | 'off' | preset number | 'custom'
+  const [customBlocksToSwap, setCustomBlocksToSwap] = React.useState<number>(12)
   const [highVram, setHighVram] = React.useState<boolean>(false)
   const [enableTB, setEnableTB] = React.useState<boolean>(false)
     const [lr, setLr] = React.useState('8e-4')
@@ -164,7 +165,23 @@
       if ((config as any).bucketNoUpscale != null) setBucketNoUpscale(Boolean((config as any).bucketNoUpscale))
       if ((config as any).resizeInterpolation != null) setResizeInterpolation(String((config as any).resizeInterpolation))
       // VRAM settings
-      if ((config as any).blocksToSwap != null) setBlocksToSwap(String((config as any).blocksToSwap))
+      if ((config as any).blocksToSwap != null) {
+        const bs = (config as any).blocksToSwap
+        if (bs === 'auto' || bs === 'off') {
+          setBlocksToSwap(bs)
+        } else {
+          const n = Number(bs)
+          if (Number.isFinite(n) && n >= 1 && n <= 35) {
+            const presets = new Set(['8','12','16','18','24','28','32','35'])
+            if (presets.has(String(n))) {
+              setBlocksToSwap(String(n))
+            } else {
+              setCustomBlocksToSwap(n)
+              setBlocksToSwap('custom')
+            }
+          }
+        }
+      }
       if ((config as any).highVram != null) setHighVram(Boolean((config as any).highVram))
       if ((config as any).enableTB != null) setEnableTB(Boolean((config as any).enableTB))
       // Text encoder training
@@ -470,7 +487,14 @@ const trainingConfig = {
           if (rankDropout != null) fd.append('rank_dropout', String(rankDropout))
           if (moduleDropout != null) fd.append('module_dropout', String(moduleDropout))
           if (blocksToSwap && blocksToSwap !== 'auto') {
-            const val = blocksToSwap === 'off' ? '0' : String(parseInt(blocksToSwap))
+            let val = '0'
+            if (blocksToSwap === 'off') {
+              val = '0'
+            } else if (blocksToSwap === 'custom') {
+              val = String(Math.max(1, Math.min(35, Math.round(customBlocksToSwap || 12))))
+            } else {
+              val = String(parseInt(blocksToSwap))
+            }
             fd.append('blocks_to_swap', val)
           }
           // Bucketing
@@ -533,7 +557,13 @@ const trainingConfig = {
           prepBody.rank_dropout = rankDropout
           prepBody.module_dropout = moduleDropout
           if (blocksToSwap && blocksToSwap !== 'auto') {
-            prepBody.blocks_to_swap = blocksToSwap === 'off' ? 0 : parseInt(blocksToSwap)
+            if (blocksToSwap === 'off') {
+              prepBody.blocks_to_swap = 0
+            } else if (blocksToSwap === 'custom') {
+              prepBody.blocks_to_swap = Math.max(1, Math.min(35, Math.round(customBlocksToSwap || 12)))
+            } else {
+              prepBody.blocks_to_swap = parseInt(blocksToSwap)
+            }
           }
           // Bucketing
           prepBody.enable_bucket = enableBucket
@@ -705,7 +735,18 @@ const trainingConfig = {
           if (p.rankDropout != null) setRankDropout(Number(p.rankDropout))
           if (p.moduleDropout != null) setModuleDropout(Number(p.moduleDropout))
           // VRAM settings (only if present - backward compatibility)
-          if (p.blocksToSwap !== undefined) setBlocksToSwap(String(p.blocksToSwap))
+          if (p.blocksToSwap !== undefined) {
+            if (p.blocksToSwap === 'auto' || p.blocksToSwap === 'off') {
+              setBlocksToSwap(p.blocksToSwap)
+            } else {
+              const n = Number(p.blocksToSwap)
+              if (Number.isFinite(n) && n >= 1 && n <= 35) {
+                const presets = new Set(['8','12','16','18','24','28','32','35'])
+                if (presets.has(String(n))) setBlocksToSwap(String(n))
+                else { setCustomBlocksToSwap(n); setBlocksToSwap('custom') }
+              }
+            }
+          }
           if (p.highVram !== undefined) setHighVram(Boolean(p.highVram))
           if (p.enableTB !== undefined) setEnableTB(Boolean(p.enableTB))
           // Text encoder training (only if present - backward compatibility)
@@ -1576,17 +1617,42 @@ const trainingConfig = {
                       <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
-                      <p>Swap model blocks between GPU and CPU during training to reduce peak VRAM. Auto enables this on 20–24GB. Turn off or set a custom number of blocks.</p>
+                      <p>Swap model blocks between GPU and CPU during training to reduce peak VRAM. Auto enables this on 20–24GB. Set any integer from 1 to 35. Higher saves more VRAM but slows training. Incompatible with CPU offload checkpointing.</p>
                     </TooltipContent>
                   </Tooltip>
                 </Label>
-                <Select value={blocksToSwap} onChange={e=>setBlocksToSwap(e.target.value)} options={[
-                  { value: 'auto', label: 'Auto (recommended)' },
-                  { value: 'off', label: 'Off' },
-                  { value: '12', label: '12 blocks' },
-                  { value: '18', label: '18 blocks' },
-                  { value: '24', label: '24 blocks' },
-                ]} />
+                <div className="flex items-center gap-3">
+                  <Select value={blocksToSwap} onChange={e=>setBlocksToSwap(e.target.value)} options={[
+                    { value: 'auto', label: 'Auto (recommended)' },
+                    { value: 'off', label: 'Off' },
+                    { value: '8', label: '8' },
+                    { value: '12', label: '12' },
+                    { value: '16', label: '16' },
+                    { value: '18', label: '18' },
+                    { value: '24', label: '24' },
+                    { value: '28', label: '28' },
+                    { value: '32', label: '32' },
+                    { value: '35', label: '35 (max)' },
+                    { value: 'custom', label: 'Custom…' },
+                  ]} />
+                  {blocksToSwap === 'custom' && (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={35}
+                        step={1}
+                        className="w-24"
+                        value={Number.isFinite(customBlocksToSwap) ? customBlocksToSwap : 12}
+                        onChange={e=>{
+                          const n = Number(e.target.value)
+                          if (Number.isFinite(n)) setCustomBlocksToSwap(Math.max(1, Math.min(35, Math.round(n))))
+                        }}
+                      />
+                      <span className="text-xs text-zinc-500">1–35</span>
+                    </div>
+                  )}
+                </div>
               </div>
               </div>
               </CollapsibleSection>
