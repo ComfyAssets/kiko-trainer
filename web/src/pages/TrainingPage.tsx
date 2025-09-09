@@ -172,7 +172,7 @@
         } else {
           const n = Number(bs)
           if (Number.isFinite(n) && n >= 1 && n <= 35) {
-            const presets = new Set(['8','12','16','18','24','28','32','35'])
+            const presets = new Set(['4','6','8','12','16','18','35'])
             if (presets.has(String(n))) {
               setBlocksToSwap(String(n))
             } else {
@@ -741,7 +741,7 @@ const trainingConfig = {
             } else {
               const n = Number(p.blocksToSwap)
               if (Number.isFinite(n) && n >= 1 && n <= 35) {
-                const presets = new Set(['8','12','16','18','24','28','32','35'])
+                const presets = new Set(['4','6','8','12','16','18','35'])
                 if (presets.has(String(n))) setBlocksToSwap(String(n))
                 else { setCustomBlocksToSwap(n); setBlocksToSwap('custom') }
               }
@@ -1625,13 +1625,12 @@ const trainingConfig = {
                   <Select value={blocksToSwap} onChange={e=>setBlocksToSwap(e.target.value)} options={[
                     { value: 'auto', label: 'Auto (recommended)' },
                     { value: 'off', label: 'Off' },
+                    { value: '4', label: '4' },
+                    { value: '6', label: '6' },
                     { value: '8', label: '8' },
                     { value: '12', label: '12' },
                     { value: '16', label: '16' },
                     { value: '18', label: '18' },
-                    { value: '24', label: '24' },
-                    { value: '28', label: '28' },
-                    { value: '32', label: '32' },
                     { value: '35', label: '35 (max)' },
                     { value: 'custom', label: 'Custom…' },
                   ]} />
