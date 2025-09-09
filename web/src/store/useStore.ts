@@ -55,7 +55,7 @@ const defaultConfig: TrainingConfig = {
   saveEvery: 4,
   timestepSampling: 'shift',
   guidanceScale: 1.0,
-  vram: '20GB',
+  vram: '24GB',
   samplePrompts: '',
   sampleEverySteps: 0,
   numRepeats: 10,
