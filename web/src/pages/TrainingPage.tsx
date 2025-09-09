@@ -967,7 +967,20 @@ const trainingConfig = {
             >
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <Label>Pretrained UNet Path (override)</Label>
+                  <Label className="flex items-center gap-2">
+                    Pretrained UNet Path (override)
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>
+                          Affects the generated training script and exports only. Leave empty to auto-resolve from the Base Model or the
+                          selected model file. Backend training resolves paths on the server; this override does not change server behavior.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
                   <Input
                     placeholder={selectedModelData?.path || 'auto (based on base model)'}
                     value={overrideUnet}
@@ -975,7 +988,19 @@ const trainingConfig = {
                   />
                 </div>
                 <div>
-                  <Label>CLIP L Path (override)</Label>
+                  <Label className="flex items-center gap-2">
+                    CLIP L Path (override)
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>
+                          Used for script/exports preview only. Default: {PATHS_CONFIG.clipL}. Backend resolves CLIP L on the server and ignores this field.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
                   <Input
                     placeholder={PATHS_CONFIG.clipL}
                     value={overrideClip}
@@ -983,7 +1008,19 @@ const trainingConfig = {
                   />
                 </div>
                 <div>
-                  <Label>T5XXL Path (override)</Label>
+                  <Label className="flex items-center gap-2">
+                    T5XXL Path (override)
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>
+                          Used for script/exports preview only. Default: {PATHS_CONFIG.t5xxl}. Backend resolves T5XXL on the server and ignores this field.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
                   <Input
                     placeholder={PATHS_CONFIG.t5xxl}
                     value={overrideT5}
@@ -991,7 +1028,19 @@ const trainingConfig = {
                   />
                 </div>
                 <div>
-                  <Label>VAE Path (override)</Label>
+                  <Label className="flex items-center gap-2">
+                    VAE Path (override)
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle className="w-3 h-3 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>
+                          Used for script/exports preview only. Default: {PATHS_CONFIG.ae}. Backend resolves VAE on the server and ignores this field.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </Label>
                   <Input
                     placeholder={PATHS_CONFIG.ae}
                     value={overrideAe}
