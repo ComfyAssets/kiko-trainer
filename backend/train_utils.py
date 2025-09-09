@@ -236,18 +236,42 @@ def gen_sh(
         args.append("--cache_text_encoder_outputs")
         args.append("--cache_text_encoder_outputs_to_disk")
     args.append("--fp8_base")
-    # High VRAM mode: force residency if requested; otherwise apply heuristics
-    should_highvram = bool(force_highvram) or (vram == "24G" or vram not in ("12G", "16G", "20G"))
+    # Normalize VRAM string (accepts values like '20GB', '24GB+', '16G')
+    vram_str = str(vram or "").upper().strip()
+    vram_digits = "".join(ch for ch in vram_str if ch.isdigit())
+    try:
+        vram_gb = int(vram_digits) if vram_digits else 20
+    except Exception:
+        vram_gb = 20
+    # Coarse buckets
+    if vram_gb >= 24:
+        vram_bucket = "24G"
+    elif vram_gb >= 20:
+        vram_bucket = "20G"
+    elif vram_gb >= 16:
+        vram_bucket = "16G"
+    else:
+        vram_bucket = "12G"
+
+    # High VRAM mode: only force when explicitly requested or clearly 24GB+
+    should_highvram = bool(force_highvram) or (vram_bucket == "24G")
     if should_highvram:
         args.append("--highvram")
+
     # Reduce VRAM during forward/backward by swapping blocks
     eff_blocks_to_swap: int | None = None
     if isinstance(blocks_to_swap_override, int):
         if blocks_to_swap_override > 0:
             eff_blocks_to_swap = blocks_to_swap_override
     else:
-        if vram == "20G":
-            eff_blocks_to_swap = 18  # default swap on 20G; leave 24G unswapped by default
+        if vram_bucket == "20G":
+            # 20GB GPUs benefit from swapping by default
+            eff_blocks_to_swap = 18
+        elif vram_bucket == "24G":
+            # On 24GB, enable a light swap by default for stability when
+            # other processes occupy VRAM; users can turn this off in UI.
+            eff_blocks_to_swap = 12
+        # 12/16GB are typically constrained; let users choose explicitly.
     if eff_blocks_to_swap is not None:
         args.append(f"--blocks_to_swap {eff_blocks_to_swap}")
 

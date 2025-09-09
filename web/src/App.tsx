@@ -95,6 +95,34 @@ export default function App() {
                 }
               }}
             >Purge VRAM</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async ()=>{
+                try {
+                  const res = await fetch(apiUrl('/api/train/clean-orphans'), { method: 'POST' })
+                  const data = await res.json().catch(()=>({}))
+                  if (res.ok && data?.ok) {
+                    const found = data?.found ?? 0
+                    const groups = data?.killed_groups ?? 0
+                    const errs = Array.isArray(data?.errors) ? data.errors.length : 0
+                    if (found === 0) {
+                      toast.success('No orphan trainers found')
+                    } else {
+                      const parts: string[] = []
+                      parts.push(`${found} orphan${found!==1?'s':''}`)
+                      parts.push(`${groups} group${groups!==1?'s':''} cleaned`)
+                      if (errs) parts.push(`${errs} error${errs!==1?'s':''}`)
+                      toast.success(`Cleaned: ${parts.join(', ')}`)
+                    }
+                  } else {
+                    toast.error('Clean orphans failed')
+                  }
+                } catch {
+                  toast.error('Clean orphans failed')
+                }
+              }}
+            >Clean Orphans</Button>
           </div>
         </div>
       </header>

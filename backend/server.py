@@ -33,6 +33,7 @@ except Exception:
 import subprocess
 import threading
 import sys
+import signal
 
 # Vision model imports
 import einops
@@ -278,6 +279,264 @@ QWEN_PRESET_PROMPTS = {
         "Write concise, vivid sentences, not lists or fragments."
     ),
 }
+
+# ---------------------------
+# Orphan trainer detection/cleanup
+# ---------------------------
+
+def _collect_trainer_pids_via_ps() -> List[Dict[str, Any]]:
+    """Fallback collector when psutil is unavailable.
+    Returns list of {pid, ppid, pgid, cmd} dicts for candidate trainer processes.
+    """
+    procs: List[Dict[str, Any]] = []
+    try:
+        # -ww for wide output to avoid truncation
+        res = subprocess.run(
+            [
+                "ps",
+                "-eo",
+                "pid,ppid,pgid,cmd",
+                "--no-headers",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            return procs
+        for line in res.stdout.splitlines():
+            try:
+                parts = line.strip().split(maxsplit=3)
+                if len(parts) < 4:
+                    continue
+                pid = int(parts[0])
+                ppid = int(parts[1])
+                pgid = int(parts[2])
+                cmd = parts[3]
+                # Candidate filter
+                if (
+                    "sd-scripts/flux_train_network.py" in cmd
+                    or "accelerate launch" in cmd and "flux_train_network.py" in cmd
+                    or "/outputs/" in cmd and ("train.sh" in cmd or "train_phase2.sh" in cmd)
+                ):
+                    procs.append({"pid": pid, "ppid": ppid, "pgid": pgid, "cmd": cmd})
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return procs
+
+
+def _collect_trainer_processes() -> List[Dict[str, Any]]:
+    """Collect candidate trainer processes and annotate with cwd and gpu_mem if possible."""
+    candidates: List[Dict[str, Any]] = []
+    # Base list via ps or psutil
+    if psutil is not None:
+        try:
+            for p in psutil.process_iter(["pid", "ppid", "name", "cmdline"]):
+                pid = int(p.info.get("pid") or 0)
+                if pid <= 0:
+                    continue
+                try:
+                    cmdline_list = p.info.get("cmdline") or []
+                    cmdline = " ".join(cmdline_list)
+                except Exception:
+                    cmdline = ""
+                name = str(p.info.get("name") or "")
+                if not cmdline:
+                    try:
+                        cmdline = " ".join(p.cmdline())
+                    except Exception:
+                        cmdline = name
+                if not cmdline:
+                    continue
+                if (
+                    "sd-scripts/flux_train_network.py" in cmdline
+                    or ("accelerate" in cmdline and "flux_train_network.py" in cmdline)
+                    or ("/outputs/" in cmdline and ("train.sh" in cmdline or "train_phase2.sh" in cmdline))
+                ):
+                    try:
+                        pgid = os.getpgid(pid)
+                    except Exception:
+                        pgid = None
+                    try:
+                        cwd = p.cwd()
+                    except Exception:
+                        cwd = None
+                    candidates.append({
+                        "pid": pid,
+                        "ppid": int(p.info.get("ppid") or 0),
+                        "pgid": pgid,
+                        "cmd": cmdline,
+                        "cwd": cwd,
+                    })
+        except Exception:
+            # Fall back to ps
+            candidates = _collect_trainer_pids_via_ps()
+    else:
+        candidates = _collect_trainer_pids_via_ps()
+
+    # Annotate GPU memory usage per pid if nvidia-smi is available
+    try:
+        res = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-compute-apps=pid,used_memory",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        pid2mem: Dict[int, float] = {}
+        if res.returncode == 0:
+            for ln in res.stdout.strip().splitlines():
+                try:
+                    sp = [s.strip() for s in ln.split(",")]
+                    if len(sp) >= 2:
+                        pid2mem[int(sp[0])] = float(sp[1])  # MiB
+                except Exception:
+                    continue
+        for c in candidates:
+            c["gpu_mem_mib"] = pid2mem.get(int(c["pid"]), 0.0)
+    except Exception:
+        pass
+
+    # Mark which ones are tracked by our RUNS
+    tracked_pids = set()
+    try:
+        for info in RUNS.values():
+            proc = info.get("proc")
+            if proc and getattr(proc, "pid", None):
+                tracked_pids.add(int(proc.pid))
+    except Exception:
+        pass
+    for c in candidates:
+        c["tracked"] = int(c.get("pid", 0)) in tracked_pids
+
+    # Filter to processes that belong to our workspace (cwd under ROOT), when known
+    root_str = str(ROOT)
+    filtered: List[Dict[str, Any]] = []
+    for c in candidates:
+        cwd = str(c.get("cwd") or "")
+        cmd = c.get("cmd") or ""
+        if cwd and cwd.startswith(root_str):
+            filtered.append(c)
+        elif root_str in cmd:
+            filtered.append(c)
+        else:
+            # Last resort: relative sd-scripts path implies our cwd was ROOT when started
+            if "sd-scripts/flux_train_network.py" in cmd:
+                filtered.append(c)
+    return filtered
+
+
+@app.get("/api/train/orphans")
+def api_train_list_orphans():
+    """List candidate trainer processes not tracked by this server (potential orphans)."""
+    procs = _collect_trainer_processes()
+    orphans = [p for p in procs if not p.get("tracked")]
+    return {"ok": True, "count": len(orphans), "processes": orphans}
+
+
+@app.post("/api/train/clean-orphans")
+def api_train_clean_orphans():
+    """Terminate untracked trainer process groups (best-effort)."""
+    procs = _collect_trainer_processes()
+    orphans = [p for p in procs if not p.get("tracked")]
+    killed: List[Dict[str, Any]] = []
+    errors: List[str] = []
+
+    # Collect unique PGIDs to terminate groups
+    pgids: Dict[int, List[int]] = {}
+    for p in orphans:
+        pgid = p.get("pgid")
+        pid = int(p.get("pid") or 0)
+        if pgid is None:
+            try:
+                pgid = os.getpgid(pid)
+            except Exception:
+                pgid = None
+        if isinstance(pgid, int):
+            pgids.setdefault(pgid, []).append(pid)
+
+    # Graceful then forceful termination
+    for pgid, pids in pgids.items():
+        try:
+            if os.name != "nt":
+                os.killpg(pgid, signal.SIGTERM)
+            else:
+                for pid in pids:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+            killed.append({"pgid": pgid, "pids": pids, "signal": "TERM"})
+        except Exception as e:
+            errors.append(f"TERM pgid {pgid} failed: {e}")
+
+    # Brief wait
+    time.sleep(1.0)
+
+    # Re-check which PIDs still alive
+    still_alive: List[int] = []
+    if psutil is not None:
+        for pgid, pids in pgids.items():
+            for pid in pids:
+                try:
+                    if psutil.pid_exists(pid):
+                        still_alive.append(pid)
+                except Exception:
+                    pass
+    else:
+        for pgid, pids in pgids.items():
+            for pid in pids:
+                try:
+                    os.kill(pid, 0)
+                    still_alive.append(pid)
+                except Exception:
+                    pass
+
+    if still_alive:
+        # Force kill the corresponding groups
+        seen = set()
+        for pid in still_alive:
+            try:
+                pgid = os.getpgid(pid)
+            except Exception:
+                pgid = None
+            if pgid is not None and pgid not in seen:
+                seen.add(pgid)
+                try:
+                    if os.name != "nt":
+                        os.killpg(pgid, signal.SIGKILL)
+                    else:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except Exception:
+                            pass
+                    killed.append({"pgid": pgid, "pids": [pid], "signal": "KILL"})
+                except Exception as e:
+                    errors.append(f"KILL pgid {pgid} failed: {e}")
+
+    return {"ok": True, "found": len(orphans), "killed_groups": len(pgids), "errors": errors}
+
+
+@app.on_event("startup")
+async def _cleanup_orphans_on_startup():
+    try:
+        # Best-effort cleanup on server start to prevent VRAM leaks from prior runs
+        procs = _collect_trainer_processes()
+        orphans = [p for p in procs if not p.get("tracked")]
+        # If there are many, clean them; otherwise leave them
+        if orphans:
+            # Use a thread to avoid blocking startup
+            def _bg():
+                try:
+                    api_train_clean_orphans()
+                except Exception:
+                    pass
+            threading.Thread(target=_bg, daemon=True).start()
+    except Exception:
+        pass
 
 # Relaxed Qwen captioner defaults (used when selecting
 # Ertugrul/Qwen2.5-VL-7B-Captioner-Relaxed)
@@ -2436,7 +2695,19 @@ def api_train_prepare(payload: Dict[str, Any]):
 
         # Cap overly large LoRA rank for given VRAM to avoid OOM
         try:
-            vram_norm = str(vram).upper().replace('B','') if isinstance(vram, str) else str(vram)
+            # Normalize VRAM strings like '24GB+', '20GB', '16G' to coarse buckets
+            vram_raw = str(vram) if vram is not None else ""
+            v = vram_raw.upper()
+            digits = "".join(ch for ch in v if ch.isdigit())
+            vram_gb = int(digits) if digits else 20
+            if vram_gb >= 24:
+                vram_norm = "24G"
+            elif vram_gb >= 20:
+                vram_norm = "20G"
+            elif vram_gb >= 16:
+                vram_norm = "16G"
+            else:
+                vram_norm = "12G"
             cap_map = {"12G": 32, "16G": 64, "20G": 96, "24G": 192}
             cap = cap_map.get(vram_norm)
             if cap is not None and network_dim > cap:
@@ -2453,7 +2724,7 @@ def api_train_prepare(payload: Dict[str, Any]):
                 if vram_norm == "20G":
                     eff_blocks_to_swap = 18  # default on 20G
                 elif vram_norm == "24G":
-                    eff_blocks_to_swap = None  # default off on 24G to use more VRAM
+                    eff_blocks_to_swap = 12  # light swap on 24G for stability
         except Exception:
             pass
 
