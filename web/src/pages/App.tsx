@@ -4,7 +4,7 @@ import { Tabs } from '../components/ui/tabs'
 import { SetupPage } from './SetupPage'
 import { TrainingPage } from './TrainingPage'
 import { PublishPage } from './PublishPage'
-import { Cpu, Settings, Upload } from 'lucide-react'
+import { Cpu, Settings } from 'lucide-react'
 import Icon from '@mdi/react'
 import { mdiBeaker } from '@mdi/js'
 

@@ -28,7 +28,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '../components/ui/tooltip'
-import { Separator } from '../components/ui/separator'
+// import { Separator } from '../components/ui/separator' // unused
 import { apiUrl } from '../config/api'
 import { useSSE } from '../hooks/useSSE'
 
@@ -77,7 +77,7 @@ export function ModelPage() {
   const [downloads, setDownloads] = React.useState<DownloadItem[]>([])
   const [isDownloading, setIsDownloading] = React.useState(false)
   const [showOverwriteDialog, setShowOverwriteDialog] = React.useState(false)
-  const [pendingFluxDownload, setPendingFluxDownload] = React.useState(false)
+  const [_pendingFluxDownload, setPendingFluxDownload] = React.useState(false)
   const [modelPreview, setModelPreview] = React.useState<{url: string, name: string, images?: string[]} | null>(null)
   const [previewOptions, setPreviewOptions] = React.useState<string[]>([])
   const [selectedPreviewUrl, setSelectedPreviewUrl] = React.useState<string | null>(null)
@@ -577,7 +577,7 @@ export function ModelPage() {
       })
       
       if (response.ok) {
-        const result = await response.json()
+        // const result = await response.json() // unused
         // Remove cleaned downloads from state
         setDownloads(prev => prev.filter(d => 
           d.status !== 'error' && d.status !== 'cancelled'

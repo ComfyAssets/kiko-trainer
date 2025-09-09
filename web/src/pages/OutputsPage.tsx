@@ -300,7 +300,7 @@ function ViewerContent({ viewer, setViewer }: { viewer: { name: string, images: 
   const endDrag = () => setDragging(false)
 
   // Touch pinch-zoom support
-  const distance = (t1: Touch, t2: Touch) => {
+  const distance = (t1: React.Touch, t2: React.Touch) => {
     const dx = t1.clientX - t2.clientX
     const dy = t1.clientY - t2.clientY
     return Math.sqrt(dx*dx + dy*dy)

@@ -14,7 +14,7 @@ import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Separator } from "../components/ui/separator";
 import { Upload, ImagePlus, X, Sparkles, HelpCircle } from "lucide-react";
-import { generateCaptions, getModelStatus, ModelStatus } from "../services/captionApi";
+import { getModelStatus, ModelStatus } from "../services/captionApi";
 import { VirtuosoGrid } from "react-virtuoso";
 import type { ImageFile } from "../types";
 import { toast } from 'react-hot-toast';
@@ -35,7 +35,7 @@ export function SetupPageEnhanced() {
     setLoraName: setContextLoraName,
     classTokens: contextClassTokens,
     setClassTokens: setContextClassTokens,
-    datasetFolder: contextDatasetFolder,
+    datasetFolder: _contextDatasetFolder, // renamed to indicate unused
     setDatasetFolder: setContextDatasetFolder
   } = useTraining();
   
@@ -155,73 +155,89 @@ export function SetupPageEnhanced() {
   async function onImportTraining(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+    
     try {
       const text = await file.text()
       const data = JSON.parse(text)
-      // Populate context fields
+      
+      if (data.version !== 1) {
+        const { toast } = await import('react-hot-toast')
+        toast.error('Unsupported export version')
+        return
+      }
+      
+      // Populate context fields (Setup page specific)
       if (data?.context?.loraName) setLoraName(data.context.loraName)
       if (data?.context?.classTokens) setTrigger(String(data.context.classTokens).replace(/,$/, ''))
       if (data?.context?.datasetFolder) setContextDatasetFolder(data.context.datasetFolder)
 
-      // Populate training parameters into global config (used by Training page)
+      // Import to global config (for TrainingPage to pick up)
       if (data?.params) {
         const p = data.params
-        try {
-          if (p.baseModel) updateConfig('baseModel', p.baseModel)
-          if (p.pretrainedPath) updateConfig('pretrainedPath', p.pretrainedPath)
-          if (p.vram) updateConfig('vram', p.vram)
-          if (p.lr) updateConfig('learningRate', p.lr)
-          if (p.dim != null) updateConfig('networkDim', Number(p.dim))
-          if (p.epochs != null) updateConfig('maxEpochs', Number(p.epochs))
-          if (p.saveEvery != null) updateConfig('saveEvery', Number(p.saveEvery))
-          if (p.batch != null) updateConfig('trainBatchSize', Number(p.batch))
-          if (p.res) updateConfig('resolution', Number(p.res))
-          if (p.timestep) updateConfig('timestepSampling', p.timestep)
-          if (p.guidance != null) updateConfig('guidanceScale', Number(p.guidance))
-          if (p.samplePrompts != null) updateConfig('samplePrompts', String(p.samplePrompts))
-          if (p.sampleEvery != null) updateConfig('sampleEverySteps', Number(p.sampleEvery))
-          if (p.sampleRes) updateConfig('sampleRes', String(p.sampleRes))
-          if (p.sampleSteps != null) updateConfig('sampleSteps', Number(p.sampleSteps))
-          if (p.sampleSampler) updateConfig('sampleSampler', String(p.sampleSampler))
-          if (p.numRepeats != null) updateConfig('numRepeats', Number(p.numRepeats))
-          if (p.seed != null) updateConfig('seed', Number(p.seed))
-          if (p.workers != null) updateConfig('workers', Number(p.workers))
-          // advanced
-          if (p.lrScheduler) updateConfig('lrScheduler', p.lrScheduler)
-          if (p.lrWarmup != null) updateConfig('lrWarmupSteps', Number(p.lrWarmup))
-          if (p.noiseOffset != null) updateConfig('noiseOffset', Number(p.noiseOffset))
-          if (p.flipSymmetry != null) updateConfig('flipSymmetry', Boolean(p.flipSymmetry))
-          if (p.loraDropout != null) updateConfig('loraDropout', Number(p.loraDropout))
-          if (p.networkAlpha != null) updateConfig('networkAlpha', Number(p.networkAlpha))
-          if (p.rankDropout != null) updateConfig('rankDropout', Number(p.rankDropout))
-          if (p.moduleDropout != null) updateConfig('moduleDropout', Number(p.moduleDropout))
-          // bucketing
-          if (p.enableBucket != null) updateConfig('enableBucket', Boolean(p.enableBucket))
-          if (p.bucketResoSteps != null) updateConfig('bucketResoSteps', Number(p.bucketResoSteps))
-          if (p.minBucketReso != null) updateConfig('minBucketReso', Number(p.minBucketReso))
-          if (p.maxBucketReso != null) updateConfig('maxBucketReso', Number(p.maxBucketReso))
-          if (p.bucketNoUpscale != null) updateConfig('bucketNoUpscale', Boolean(p.bucketNoUpscale))
-          if (p.resizeInterpolation != null) updateConfig('resizeInterpolation', String(p.resizeInterpolation) as any)
-        } catch (e) {
-          console.warn('Partial training params import failed:', e)
-        }
+        // Import basic parameters to global config
+        if (p.baseModel) updateConfig('baseModel', p.baseModel)
+        if (p.lr) updateConfig('learningRate', p.lr)
+        if (p.dim != null) updateConfig('networkDim', Number(p.dim))
+        if (p.epochs != null) updateConfig('maxEpochs', Number(p.epochs))
+        if (p.saveEvery != null) updateConfig('saveEvery', Number(p.saveEvery))
+        if (p.batch != null) updateConfig('trainBatchSize', Number(p.batch))
+        if (p.res) updateConfig('resolution', Number(p.res))
+        if (p.timestep) updateConfig('timestepSampling', p.timestep)
+        if (p.guidance != null) updateConfig('guidanceScale', Number(p.guidance))
+        if (p.samplePrompts != null) updateConfig('samplePrompts', String(p.samplePrompts))
+        if (p.sampleEvery != null) updateConfig('sampleEverySteps', Number(p.sampleEvery))
+        if (p.numRepeats != null) updateConfig('numRepeats', Number(p.numRepeats))
+        if (p.seed != null) updateConfig('seed', Number(p.seed))
+        if (p.workers != null) updateConfig('workers', Number(p.workers))
+        if (p.lrScheduler) updateConfig('lrScheduler', p.lrScheduler)
+        if (p.lrWarmup != null) updateConfig('lrWarmupSteps', Number(p.lrWarmup))
+        if (p.noiseOffset != null) updateConfig('noiseOffset', Number(p.noiseOffset))
+        if (p.flipSymmetry != null) updateConfig('flipSymmetry', Boolean(p.flipSymmetry))
+        if (p.loraDropout != null) updateConfig('loraDropout', Number(p.loraDropout))
+        if (p.networkAlpha != null) updateConfig('networkAlpha', Number(p.networkAlpha))
+        if (p.rankDropout != null) updateConfig('rankDropout', Number(p.rankDropout))
+        if (p.moduleDropout != null) updateConfig('moduleDropout', Number(p.moduleDropout))
+        if (p.enableBucket != null) updateConfig('enableBucket', Boolean(p.enableBucket))
+        if (p.bucketResoSteps != null) updateConfig('bucketResoSteps', Number(p.bucketResoSteps))
+        if (p.minBucketReso != null) updateConfig('minBucketReso', Number(p.minBucketReso))
+        if (p.maxBucketReso != null) updateConfig('maxBucketReso', Number(p.maxBucketReso))
+        if (p.bucketNoUpscale != null) updateConfig('bucketNoUpscale', Boolean(p.bucketNoUpscale))
+        if (p.resizeInterpolation != null) updateConfig('resizeInterpolation', String(p.resizeInterpolation) as any)
       }
 
-      // Populate images with captions
-      if (Array.isArray(data?.images)) {
-        // Clear existing
+      // Import images with captions
+      if (data.images && Array.isArray(data.images)) {
         clearImages()
-        const items = await Promise.all(data.images.map(async (it: any) => {
-          const res = await fetch(it.dataUrl)
-          const blob = await res.blob()
-          const file = new File([blob], it.name || 'image', { type: it.type || blob.type })
-          return { file, caption: it.caption || '' }
+        const imageFiles = await Promise.all(data.images.map(async (img: any) => {
+          const response = await fetch(img.dataUrl)
+          const blob = await response.blob()
+          const file = new File([blob], img.name, { type: img.type })
+          return { file, caption: img.caption || '' }
         }))
-        addImagesWithCaptions(items)
+        addImagesWithCaptions(imageFiles)
       }
+
+      // Fix class_tokens conflict: if import has class_tokens set but also has images with captions, clear class_tokens
+      const importedClassTokens = data.context?.classTokens || data.params?.classTokens
+      const hasImportedImages = data.images && Array.isArray(data.images) && data.images.length > 0
+      const hasIndividualCaptions = hasImportedImages && data.images.some((img: any) => img.caption && img.caption.trim())
+      
+      if (importedClassTokens && hasIndividualCaptions) {
+        // Clear class_tokens since we have individual captions
+        setTrigger('') // Clear the trigger word on Setup page
+        updateConfig('trigger_word', '') // Also clear from global config
+        
+        const { toast } = await import('react-hot-toast')
+        toast.success('Training configuration imported! Class tokens cleared since individual captions were found.')
+      } else {
+        const { toast } = await import('react-hot-toast')
+        toast.success('Training configuration imported successfully!')
+      }
+      
     } catch (err) {
       console.error('Failed to import training JSON:', err)
-      alert('Invalid training JSON file')
+      const { toast } = await import('react-hot-toast')
+      toast.error('Failed to import configuration: ' + (err as any).message)
     } finally {
       // reset input value so same file can be chosen again if needed
       (e.target as HTMLInputElement).value = ''
@@ -623,7 +639,7 @@ export function SetupPageEnhanced() {
                 totalCount={images.length}
                 overscan={200}
                 data={images}
-                computeItemKey={(index, item) => (item as ImageFile).id}
+                computeItemKey={(_index, item) => (item as ImageFile).id}
                 components={{
                   List: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
                     <div
@@ -636,7 +652,7 @@ export function SetupPageEnhanced() {
                     <div {...props} ref={ref} />
                   )),
                 }}
-                itemContent={(index, item) => (
+                itemContent={(_index, item) => (
                   <ThumbCard
                     img={item as ImageFile}
                     onRemove={removeImage}

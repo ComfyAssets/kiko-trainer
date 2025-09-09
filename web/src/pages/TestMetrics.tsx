@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import MetricsChart from '../components/MetricsChart';
 import MetricsChartEnhanced from '../components/MetricsChartEnhanced';
 

@@ -7,9 +7,9 @@ import {
 } from "../components/ui/card";
 import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
-import { Textarea } from "../components/ui/textarea";
 import { Select } from "../components/ui/select";
-import { Button } from "../components/ui/button";
+// import { Textarea } from "../components/ui/textarea"; // unused
+// import { Button } from "../components/ui/button"; // unused
 import { Separator } from "../components/ui/separator";
 import { Upload, ImagePlus } from "lucide-react";
 

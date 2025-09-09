@@ -7,7 +7,7 @@
   import { Textarea } from '../components/ui/textarea'
   import { Button } from '../components/ui/button'
   import { Dialog } from '../components/ui/dialog'
-  import { Separator } from '../components/ui/separator'
+  // import { Separator } from '../components/ui/separator' // unused
   import { Switch } from '../components/ui/switch'
   import { CollapsibleSection } from '../components/CollapsibleSection'
   import { Play, FileText, FileJson, HelpCircle, Image, ChevronDown } from 'lucide-react'
@@ -30,7 +30,7 @@
     const { loraName, classTokens, datasetFolder } = useTraining()
     
     const [baseModel, setBaseModel] = React.useState('FLUX.1-dev')
-  const [vram, setVram] = React.useState('20GB')
+  const [vram, setVram] = React.useState('24GB')
   const [blocksToSwap, setBlocksToSwap] = React.useState<string>('auto') // 'auto' | 'off' | number string
   const [highVram, setHighVram] = React.useState<boolean>(false)
   const [enableTB, setEnableTB] = React.useState<boolean>(false)
@@ -121,7 +121,12 @@
         setSelectedModelData({ path: p, filename: p.split('/').pop(), name: p.split('/').pop(), metadata: {} } as any)
       }
       if (config.vram) setVram(config.vram)
-      if (config.learningRate) setLr(config.learningRate)
+      if (config.learningRate) {
+        setLr(config.learningRate)
+        // Update preset dropdown to match the global config learning rate
+        const presets = new Set(['8e-4','5e-4','2e-4','1e-4'])
+        setLrPreset(presets.has(config.learningRate) ? config.learningRate : 'custom')
+      }
       if (config.networkDim != null) setDim(Number(config.networkDim))
       if (config.maxEpochs != null) setEpochs(Number(config.maxEpochs))
       if (config.saveEvery != null) setSaveEvery(Number(config.saveEvery))
@@ -152,6 +157,15 @@
       if ((config as any).maxBucketReso != null) setMaxBucketReso(Number((config as any).maxBucketReso))
       if ((config as any).bucketNoUpscale != null) setBucketNoUpscale(Boolean((config as any).bucketNoUpscale))
       if ((config as any).resizeInterpolation != null) setResizeInterpolation(String((config as any).resizeInterpolation))
+      // VRAM settings
+      if ((config as any).blocksToSwap != null) setBlocksToSwap(String((config as any).blocksToSwap))
+      if ((config as any).highVram != null) setHighVram(Boolean((config as any).highVram))
+      if ((config as any).enableTB != null) setEnableTB(Boolean((config as any).enableTB))
+      // Text encoder training
+      if ((config as any).trainClipL != null) setTrainClipL(Boolean((config as any).trainClipL))
+      if ((config as any).trainT5 != null) setTrainT5(Boolean((config as any).trainT5))
+      if ((config as any).teLr != null) setTeLr(String((config as any).teLr))
+      if ((config as any).teWarmupSteps != null) setTeWarmupSteps(Number((config as any).teWarmupSteps))
     } catch {}
   }, [config])
 
@@ -214,8 +228,8 @@
     const bucketStep = sanitizeBucketStep(bucketResoSteps)
     const augSummary = `${flipSymmetry ? 'flip on' : 'flip off'}, step ${bucketStep}, ${minBucketReso}–${maxBucketReso}, ${bucketNoUpscale ? 'no upscale' : 'upscale'}`
 
-    const sampleCount = (samples || '').split('\n').filter(l => l.trim()).length
-    const sampleSummary = sampleEvery === 0 ? 'disabled' : `every ${sampleEvery} steps, ${sampleCount} prompt${sampleCount===1?'':'s'}`
+    // const sampleCount = (samples || '').split('\n').filter(l => l.trim()).length // unused
+    // const sampleSummary = sampleEvery === 0 ? 'disabled' : `every ${sampleEvery} steps, ${sampleCount} prompt${sampleCount===1?'':'s'}` // unused
 const trainingConfig = {
       baseModel,
       loraName,
@@ -527,8 +541,8 @@ const trainingConfig = {
       const prepData = await prep.json()
       // Hints: show rank capping and block swap usage
       if (typeof prepData?.effective_network_dim === 'number' && prepData.effective_network_dim !== dim) {
-        const from = dim
-        const to = prepData.effective_network_dim
+        // const from = dim
+        // const to = prepData.effective_network_dim // unused
         try { (await import('react-hot-toast')).toast?.(null as any) } catch {}
       }
       try {
@@ -613,6 +627,121 @@ const trainingConfig = {
   }, [])
 
     // Export current training session as JSON (config + images + captions)
+    // Import training configuration from JSON file
+    const importTraining = async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      if (!file) return
+      
+      try {
+        const text = await file.text()
+        const data = JSON.parse(text)
+        
+        if (data.version !== 1) {
+          const { toast } = await import('react-hot-toast')
+          toast.error('Unsupported export version')
+          return
+        }
+        
+        // Import context
+        if (data.context) {
+          // Note: loraName, classTokens, datasetFolder would need to be updated via the training context
+          // For now, we'll skip these as they're managed differently
+        }
+        
+        // Import all parameters
+        if (data.params) {
+          const p = data.params
+          if (p.baseModel) setBaseModel(p.baseModel)
+          if (p.pretrainedPath) {
+            setSelectedModelData({ path: p.pretrainedPath, filename: p.pretrainedPath.split('/').pop(), name: p.pretrainedPath.split('/').pop(), metadata: {} } as any)
+          }
+          if (p.vram) setVram(p.vram)
+          if (p.lr) {
+            setLr(p.lr)
+            // Update the preset dropdown to match the imported learning rate
+            const presets = new Set(['8e-4','5e-4','2e-4','1e-4'])
+            setLrPreset(presets.has(p.lr) ? p.lr : 'custom')
+          }
+          if (p.dim != null) setDim(Number(p.dim))
+          if (p.epochs != null) setEpochs(Number(p.epochs))
+          if (p.saveEvery != null) setSaveEvery(Number(p.saveEvery))
+          if (p.batch != null) setBatch(Number(p.batch))
+          if (p.res != null) setRes(String(p.res))
+          if (p.timestep) setTimestep(p.timestep)
+          if (p.guidance != null) setGuidance(Number(p.guidance))
+          if (p.samplePrompts != null) setSamples(String(p.samplePrompts))
+          if (p.sampleEvery != null) setSampleEvery(Number(p.sampleEvery))
+          if (p.sampleRes) setSampleRes(p.sampleRes)
+          if (p.sampleSteps != null) setSampleSteps(Number(p.sampleSteps))
+          if (p.sampleSampler) setSampleSampler(p.sampleSampler)
+          if (p.numRepeats != null) setNumRepeats(Number(p.numRepeats))
+          if (p.seed != null) setSeed(Number(p.seed))
+          if (p.workers != null) setWorkers(Number(p.workers))
+          // Advanced
+          if (p.lrScheduler) setLrScheduler(p.lrScheduler)
+          if (p.lrWarmup != null) setLrWarmup(Number(p.lrWarmup))
+          if (p.noiseOffset != null) setNoiseOffset(Number(p.noiseOffset))
+          if (p.flipSymmetry != null) setFlipSymmetry(Boolean(p.flipSymmetry))
+          if (p.loraDropout != null) setLoraDropout(Number(p.loraDropout))
+          if (p.networkAlpha != null) setNetworkAlpha(Number(p.networkAlpha))
+          if (p.rankDropout != null) setRankDropout(Number(p.rankDropout))
+          if (p.moduleDropout != null) setModuleDropout(Number(p.moduleDropout))
+          // VRAM settings (only if present - backward compatibility)
+          if (p.blocksToSwap !== undefined) setBlocksToSwap(String(p.blocksToSwap))
+          if (p.highVram !== undefined) setHighVram(Boolean(p.highVram))
+          if (p.enableTB !== undefined) setEnableTB(Boolean(p.enableTB))
+          // Text encoder training (only if present - backward compatibility)
+          if (p.trainClipL !== undefined) setTrainClipL(Boolean(p.trainClipL))
+          if (p.trainT5 !== undefined) setTrainT5(Boolean(p.trainT5))
+          if (p.teLr !== undefined) setTeLr(String(p.teLr))
+          if (p.teWarmupSteps !== undefined) setTeWarmupSteps(Number(p.teWarmupSteps))
+          // Bucketing
+          if (p.enableBucket != null) setEnableBucket(Boolean(p.enableBucket))
+          if (p.bucketResoSteps != null) setBucketResoSteps(Number(p.bucketResoSteps))
+          if (p.minBucketReso != null) setMinBucketReso(Number(p.minBucketReso))
+          if (p.maxBucketReso != null) setMaxBucketReso(Number(p.maxBucketReso))
+          if (p.bucketNoUpscale != null) setBucketNoUpscale(Boolean(p.bucketNoUpscale))
+          if (p.resizeInterpolation !== undefined) setResizeInterpolation(String(p.resizeInterpolation))
+        }
+        
+        // Import images to store
+        if (data.images && Array.isArray(data.images)) {
+          const { addImagesWithCaptions } = useStore.getState()
+          const imageFiles = await Promise.all(data.images.map(async (img: any) => {
+            const response = await fetch(img.dataUrl)
+            const blob = await response.blob()
+            const file = new File([blob], img.name, { type: img.type })
+            return { file, caption: img.caption || '' }
+          }))
+          addImagesWithCaptions(imageFiles)
+        }
+
+        // Fix class_tokens conflict: if import has class_tokens set but also has images with captions, clear class_tokens
+        const importedClassTokens = data.context?.classTokens || data.params?.classTokens
+        const hasImportedImages = data.images && Array.isArray(data.images) && data.images.length > 0
+        const hasIndividualCaptions = hasImportedImages && data.images.some((img: any) => img.caption && img.caption.trim())
+        
+        if (importedClassTokens && hasIndividualCaptions) {
+          // Clear class_tokens from global config since we have individual captions
+          const { updateConfig } = useStore.getState()
+          updateConfig('trigger_word', '') // Clear trigger word which stores class_tokens
+          
+          const { toast } = await import('react-hot-toast')
+          toast.success('Configuration imported! Class tokens cleared since individual captions were found.')
+        } else {
+          const { toast } = await import('react-hot-toast')
+          toast.success('Configuration imported successfully!')
+        }
+      } catch (error) {
+        console.error('Import error:', error)
+        const { toast } = await import('react-hot-toast')
+        toast.error('Failed to import configuration: ' + (error as any).message)
+      }
+      
+      // Reset the file input
+      event.target.value = ''
+    }
+
     const exportTraining = async () => {
       // Read images as data URLs
       const readAsDataURL = (file: File) => new Promise<string>((resolve, reject) => {
@@ -641,6 +770,10 @@ const trainingConfig = {
           // advanced
           lrScheduler, lrWarmup, noiseOffset, flipSymmetry,
           loraDropout, networkAlpha, rankDropout, moduleDropout,
+          // VRAM settings
+          blocksToSwap, highVram, enableTB,
+          // Text encoder training
+          trainClipL, trainT5, teLr, teWarmupSteps,
           // bucketing
           enableBucket, bucketResoSteps: sanitizeBucketStep(bucketResoSteps), minBucketReso, maxBucketReso, bucketNoUpscale, resizeInterpolation,
         },
@@ -1456,6 +1589,16 @@ const trainingConfig = {
                   <FileJson className="w-4 h-4 mr-2" /> View Dataset
                 </Button>
                 <Button variant="outline" onClick={exportTraining} className="w-full">Export Config</Button>
+                <Button variant="outline" onClick={() => document.getElementById('importInput')?.click()} className="w-full">
+                  Import Config
+                </Button>
+                <input
+                  id="importInput"
+                  type="file"
+                  accept=".json"
+                  onChange={importTraining}
+                  style={{ display: 'none' }}
+                />
                 <Button onClick={startTraining} disabled={isTraining} className="w-full">
                   <Play className="w-4 h-4 mr-2" /> {isTraining ? 'Training…' : 'Start Training'}
                 </Button>
