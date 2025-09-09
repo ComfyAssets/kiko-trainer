@@ -1,0 +1,4 @@
+# Ignore local build artifacts for the web app
+dist/
+.vite/
+.DS_Store
