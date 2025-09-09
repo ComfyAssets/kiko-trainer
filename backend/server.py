@@ -543,6 +543,7 @@ def _find_tb_event_dir(tb_root: str) -> str | None:
 
 @app.get("/api/metrics/recent")
 def api_metrics_recent(name: str, limit: int = 512, source: Optional[str] = None):
+    """Get recent training metrics"""
     # Prefer TensorBoard if available
     tb_dir = tu_resolve_path_without_quotes(f"outputs/{name}/tb") if tu_resolve_path_without_quotes else str((ROOT / 'outputs' / name / 'tb'))
     if (source is None or source == 'tb') and os.path.isdir(tb_dir):
@@ -669,6 +670,8 @@ def _follow_jsonl(path: str):
 
 @app.get("/api/metrics/stream")
 def api_metrics_stream(name: str, source: Optional[str] = None):
+    """Stream training metrics"""
+    # Use original working implementation
     # Prefer TB polling stream if available
     tb_dir = tu_resolve_path_without_quotes(f"outputs/{name}/tb") if tu_resolve_path_without_quotes else str((ROOT / 'outputs' / name / 'tb'))
     if (source is None or source == 'tb') and os.path.isdir(tb_dir):
