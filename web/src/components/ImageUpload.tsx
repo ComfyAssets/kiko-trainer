@@ -58,8 +58,10 @@ export const ImageUpload: React.FC = () => {
   );
 };
 
+import type { ImageFile } from '../types'
+
 const ImageCard: React.FC<{
-  image: any; // Fix TypeScript error - ReturnType inference issue
+  image: ImageFile; // explicit type instead of any
   onRemove: (id: string) => void;
   onUpdate: (id: string, caption: string) => void;
 }> = ({ image, onRemove, onUpdate }) => {

@@ -123,7 +123,7 @@ setup: ## Initial project setup
 	@cp -n .env.example .env 2>/dev/null || echo ".env already exists"
 	@cp -n web/.env.example web/.env 2>/dev/null || echo "web/.env already exists"
 	@echo "Creating necessary directories..."
-	@mkdir -p outputs models dataset
+	@mkdir -p outputs models datasets
 	@echo "Setup complete!"
 
 # Production

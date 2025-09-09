@@ -348,17 +348,10 @@ def gen_toml(
     lines.append('')
     lines.append('[[datasets.subsets]]')
     lines.append(f"image_dir = '{resolve_path_without_quotes(dataset_folder)}'")
-    print(f"[DEBUG gen_toml] class_tokens parameter: {class_tokens} (type: {type(class_tokens)})")
     if class_tokens:
         ct = str(class_tokens).strip().strip(',')
-        print(f"[DEBUG gen_toml] After processing: '{ct}'")
         if ct:
-            print(f"[DEBUG gen_toml] Adding class_tokens line: 'class_tokens = '{ct}''")
             lines.append(f"class_tokens = '{ct}'")
-        else:
-            print(f"[DEBUG gen_toml] Empty ct, not adding class_tokens line")
-    else:
-        print(f"[DEBUG gen_toml] class_tokens is falsy, not adding class_tokens line")
     lines.append(f'num_repeats = {num_repeats}')
     lines.append(f'flip_aug = {str(bool(flip_aug)).lower()}')
 

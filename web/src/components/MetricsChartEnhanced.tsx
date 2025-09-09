@@ -11,6 +11,13 @@ type MetricPoint = {
   grad_norm?: number | null;
 };
 
+type ProcessedPoint = {
+  x: number;
+  loss: number;
+  lr?: number;
+  smoothedLoss?: number;
+};
+
 interface Props {
   outputName: string;
   onSourceChange?: (source: "tensorboard" | "csv" | "none") => void;
@@ -156,8 +163,8 @@ export default function MetricsChartEnhanced({ outputName, onSourceChange }: Pro
   }, [outputName, sourceMode]);
   
   // Process data for visualization
-  const processedData = useMemo(() => {
-    const points: Array<{ x: number; loss: number; lr?: number }> = [];
+  const processedData = useMemo<ProcessedPoint[]>(() => {
+    const points: ProcessedPoint[] = [];
     let xCounter = 0;
     
     for (const d of data) {
@@ -198,9 +205,9 @@ export default function MetricsChartEnhanced({ outputName, onSourceChange }: Pro
   
   // Apply moving average smoothing
   function applySmoothing(
-    points: Array<{ x: number; loss: number; lr?: number }>,
+    points: ProcessedPoint[],
     windowSize: number
-  ): Array<{ x: number; loss: number; smoothedLoss: number; lr?: number }> {
+  ): ProcessedPoint[] {
     const result = [];
     const window: number[] = [];
     
@@ -212,10 +219,7 @@ export default function MetricsChartEnhanced({ outputName, onSourceChange }: Pro
       
       const smoothedLoss = window.reduce((a, b) => a + b, 0) / window.length;
       
-      result.push({
-        ...point,
-        smoothedLoss,
-      });
+      result.push({ ...point, smoothedLoss });
     }
     
     return result;
@@ -232,7 +236,7 @@ export default function MetricsChartEnhanced({ outputName, onSourceChange }: Pro
     }
     
     const xValues = processedData.map(p => p.x);
-    const lossValues = processedData.map(p => (p as any).smoothedLoss ?? p.loss);
+    const lossValues = processedData.map(p => p.smoothedLoss ?? p.loss);
     const lrValues = processedData.filter(p => p.lr !== undefined).map(p => p.lr!);
     
     const xRange = [Math.min(...xValues), Math.max(...xValues)];
@@ -293,7 +297,7 @@ export default function MetricsChartEnhanced({ outputName, onSourceChange }: Pro
   );
   
   const smoothedPath = generatePath(
-    processedData.map(p => ({ x: p.x, y: (p as any).smoothedLoss ?? p.loss })),
+    processedData.map(p => ({ x: p.x, y: p.smoothedLoss ?? p.loss })),
     scaleLoss
   );
   

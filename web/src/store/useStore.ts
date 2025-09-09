@@ -129,9 +129,7 @@ export const useStore = create<AppStore>()(persist((set, get) => ({
   // Images and Captions
   images: [],
   addImages: (files) => {
-    console.log('Zustand addImages: Adding', files.length, 'files');
     return set((state) => {
-      console.log('Zustand addImages: Current state has', state.images.length, 'images');
       const newImages = [
         ...state.images,
         ...files.map((file) => ({
@@ -141,7 +139,6 @@ export const useStore = create<AppStore>()(persist((set, get) => ({
           caption: '',
         })),
       ];
-      console.log('Zustand addImages: New state will have', newImages.length, 'images');
       return { images: newImages };
     });
   },

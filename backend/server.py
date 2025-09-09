@@ -2642,24 +2642,16 @@ def api_train_prepare(payload: Dict[str, Any]):
         # Check if individual caption files exist - if so, don't use class_tokens
         dataset_abs_path = tu_resolve_path_without_quotes(dataset_folder)
         has_individual_captions = False
-        print(f"[DEBUG] Checking for caption files in: {dataset_abs_path}")
         try:
             import os
             if os.path.exists(dataset_abs_path):
                 txt_files = [f for f in os.listdir(dataset_abs_path) if f.endswith('.txt')]
-                print(f"[DEBUG] Found {len(txt_files)} .txt files: {txt_files[:5]}{'...' if len(txt_files) > 5 else ''}")
                 has_individual_captions = len(txt_files) > 0
-            else:
-                print(f"[DEBUG] Dataset path does not exist: {dataset_abs_path}")
-        except Exception as e:
-            print(f"[DEBUG] Exception checking for caption files: {e}")
-        
-        print(f"[DEBUG] has_individual_captions: {has_individual_captions}")
-        print(f"[DEBUG] class_tokens input: '{class_tokens}'")
-        
+        except Exception:
+            has_individual_captions = False
+
         # Only use class_tokens if no individual captions exist
         effective_class_tokens = None if has_individual_captions else class_tokens
-        print(f"[DEBUG] effective_class_tokens: {effective_class_tokens}")
         
         toml_text = tu_gen_toml(
             dataset_folder,
@@ -2836,7 +2828,6 @@ async def api_train_prepare_upload(
                 cap_text = ''
                 if idx < len(caps):
                     cap_text = str(caps[idx] or '')
-                
                 # Only use class_tokens when there's no individual caption
                 if cap_text.strip():
                     # Individual caption exists, don't use class_tokens
