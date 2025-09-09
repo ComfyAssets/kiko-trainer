@@ -1,6 +1,9 @@
 interface TrainingConfig {
   baseModel: string
   pretrainedPath?: string
+  clipPath?: string
+  t5Path?: string
+  aePath?: string
   loraName: string
   resolution: number
   seed: number
@@ -37,9 +40,9 @@ export function generateTrainingScript(config: TrainingConfig): string {
   
   // Resolve model component paths from env-configured roots
   const modelPath = resolveUnetPath(config.baseModel, config.pretrainedPath)
-  const clipPath = PATHS_CONFIG.clipL
-  const t5Path = PATHS_CONFIG.t5xxl
-  const aePath = PATHS_CONFIG.ae
+  const clipPath = (config.clipPath && config.clipPath.trim()) || PATHS_CONFIG.clipL
+  const t5Path = (config.t5Path && config.t5Path.trim()) || PATHS_CONFIG.t5xxl
+  const aePath = (config.aePath && config.aePath.trim()) || PATHS_CONFIG.ae
 
   // Sample generation
   let sampleConfig = ''
@@ -133,7 +136,9 @@ export function generateDatasetToml(config: TrainingConfig): string {
   lines.push('')
   lines.push('[[datasets.subsets]]')
   lines.push(`image_dir = '${config.datasetFolder}'`)
-  lines.push(`class_tokens = '${config.classTokens}'`)
+  if ((config.classTokens || '').trim()) {
+    lines.push(`class_tokens = '${String(config.classTokens).trim()}'`)
+  }
   lines.push(`num_repeats = ${config.numRepeats}`)
   return lines.join('\n') + '\n'
 }

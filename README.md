@@ -154,6 +154,18 @@ cd web
 npm install
 ```
 
+### Frontend Environment
+
+The web app reads configuration from Vite env vars. Copy `web/.env.example` to `web/.env` and adjust as needed:
+
+- `VITE_API_HOST` / `VITE_API_PORT` — API location used by the web UI.
+- `VITE_MODELS_DIR` — base directory for model components (UNet, CLIP, T5, VAE).
+- `VITE_OUTPUTS_DIR` — base outputs directory for generated runs.
+
+Defaults are `models` and `outputs`, matching the repo layout and Docker mounts (`/app/models`, `/app/outputs`).
+
+In the Training page, “Model Paths (Advanced)” lets you override UNet/CLIP/T5/VAE paths for the generated training script and exports. Leave these fields empty to use env defaults. Backend training resolves paths on the server and does not depend on these UI overrides.
+
 ## 📖 Usage
 
 ### Training Workflow

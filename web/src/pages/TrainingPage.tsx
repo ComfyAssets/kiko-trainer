@@ -22,6 +22,7 @@
   import { generateTrainingScript, generateDatasetToml } from '../utils/trainingConfig'
   import { useTraining } from '../contexts/TrainingContext'
   import { apiUrl } from '../config/api'
+  import { PATHS_CONFIG } from '../config/paths'
   import { useStore } from '../store/useStore'
   import SampleGallery from '../components/SampleGallery'
 
@@ -105,6 +106,11 @@
     const [showModelPicker, setShowModelPicker] = React.useState(false)
     const [availableModels, setAvailableModels] = React.useState<any[]>([])
   const [selectedModelData, setSelectedModelData] = React.useState<any>(null)
+  // Optional path overrides (advanced)
+  const [overrideUnet, setOverrideUnet] = React.useState<string>('')
+  const [overrideClip, setOverrideClip] = React.useState<string>('')
+  const [overrideT5, setOverrideT5] = React.useState<string>('')
+  const [overrideAe, setOverrideAe] = React.useState<string>('')
   const { images, config, updateConfig } = useStore()
 
   // Sync local training params from global config (populated on Import Training)
@@ -258,7 +264,14 @@ const trainingConfig = {
       resizeInterpolation,
     }
 
-    const script = generateTrainingScript(trainingConfig)
+    // Add optional model path overrides for script preview
+    const script = generateTrainingScript({
+      ...trainingConfig,
+      pretrainedPath: (overrideUnet && overrideUnet.trim()) || selectedModelData?.path || undefined,
+      clipPath: overrideClip.trim() || undefined,
+      t5Path: overrideT5.trim() || undefined,
+      aePath: overrideAe.trim() || undefined,
+    })
   const datasetToml = generateDatasetToml(trainingConfig)
 
   // Training run state and logs
@@ -702,6 +715,11 @@ const trainingConfig = {
           if (p.maxBucketReso != null) setMaxBucketReso(Number(p.maxBucketReso))
           if (p.bucketNoUpscale != null) setBucketNoUpscale(Boolean(p.bucketNoUpscale))
           if (p.resizeInterpolation !== undefined) setResizeInterpolation(String(p.resizeInterpolation))
+          // Model path overrides (optional)
+          if (p.pretrainedPath) setOverrideUnet(String(p.pretrainedPath))
+          if (p.clipPath) setOverrideClip(String(p.clipPath))
+          if (p.t5Path) setOverrideT5(String(p.t5Path))
+          if (p.aePath) setOverrideAe(String(p.aePath))
         }
         
         // Import images to store
@@ -764,7 +782,12 @@ const trainingConfig = {
         exportedAt: new Date().toISOString(),
         context: { loraName, classTokens, datasetFolder },
         params: {
-          baseModel, pretrainedPath: selectedModelData?.path || '', vram, lr, dim, epochs, saveEvery, batch, res, timestep, guidance,
+          baseModel,
+          pretrainedPath: (overrideUnet && overrideUnet.trim()) || selectedModelData?.path || '',
+          clipPath: overrideClip || undefined,
+          t5Path: overrideT5 || undefined,
+          aePath: overrideAe || undefined,
+          vram, lr, dim, epochs, saveEvery, batch, res, timestep, guidance,
           samplePrompts: samples, sampleEvery, sampleRes, sampleSteps, sampleSampler,
           numRepeats, seed, workers,
           // advanced
@@ -933,6 +956,50 @@ const trainingConfig = {
                   ]} />
                 </div>
               </div>
+            </CollapsibleSection>
+
+            {/* Learning Schedule after Model & Hardware */}
+            <CollapsibleSection
+              title="Model Paths (Advanced)"
+              subtitle="Override default model component paths for script previews and exports. Leave empty to use environment defaults."
+              storageKey="kiko.advanced.modelpaths"
+              className="p-4 rounded-md border border-zinc-800 space-y-4"
+            >
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <Label>Pretrained UNet Path (override)</Label>
+                  <Input
+                    placeholder={selectedModelData?.path || 'auto (based on base model)'}
+                    value={overrideUnet}
+                    onChange={e=>setOverrideUnet(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>CLIP L Path (override)</Label>
+                  <Input
+                    placeholder={PATHS_CONFIG.clipL}
+                    value={overrideClip}
+                    onChange={e=>setOverrideClip(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>T5XXL Path (override)</Label>
+                  <Input
+                    placeholder={PATHS_CONFIG.t5xxl}
+                    value={overrideT5}
+                    onChange={e=>setOverrideT5(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>VAE Path (override)</Label>
+                  <Input
+                    placeholder={PATHS_CONFIG.ae}
+                    value={overrideAe}
+                    onChange={e=>setOverrideAe(e.target.value)}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-zinc-500">Note: Backend training uses server-side paths; these overrides affect the generated script preview and exports.</p>
             </CollapsibleSection>
 
             {/* Learning Schedule after Model & Hardware */}
