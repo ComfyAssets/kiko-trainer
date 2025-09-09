@@ -237,7 +237,8 @@ def gen_sh(
         args.append("--cache_text_encoder_outputs_to_disk")
     args.append("--fp8_base")
     # High VRAM mode: force residency if requested; otherwise apply heuristics
-    should_highvram = bool(force_highvram) or (vram == "24G" or vram not in ("12G", "16G", "20G"))
+    # Be more conservative with 24G since it's barely enough for FLUX training
+    should_highvram = bool(force_highvram) or (vram not in ("12G", "16G", "20G", "24G"))
     if should_highvram:
         args.append("--highvram")
     # Reduce VRAM during forward/backward by swapping blocks
@@ -247,7 +248,9 @@ def gen_sh(
             eff_blocks_to_swap = blocks_to_swap_override
     else:
         if vram == "20G":
-            eff_blocks_to_swap = 18  # default swap on 20G; leave 24G unswapped by default
+            eff_blocks_to_swap = 18  # default swap on 20G
+        elif vram == "24G":
+            eff_blocks_to_swap = 12  # conservative swap on 24G to prevent OOM
     if eff_blocks_to_swap is not None:
         args.append(f"--blocks_to_swap {eff_blocks_to_swap}")
 
@@ -345,10 +348,17 @@ def gen_toml(
     lines.append('')
     lines.append('[[datasets.subsets]]')
     lines.append(f"image_dir = '{resolve_path_without_quotes(dataset_folder)}'")
+    print(f"[DEBUG gen_toml] class_tokens parameter: {class_tokens} (type: {type(class_tokens)})")
     if class_tokens:
         ct = str(class_tokens).strip().strip(',')
+        print(f"[DEBUG gen_toml] After processing: '{ct}'")
         if ct:
+            print(f"[DEBUG gen_toml] Adding class_tokens line: 'class_tokens = '{ct}''")
             lines.append(f"class_tokens = '{ct}'")
+        else:
+            print(f"[DEBUG gen_toml] Empty ct, not adding class_tokens line")
+    else:
+        print(f"[DEBUG gen_toml] class_tokens is falsy, not adding class_tokens line")
     lines.append(f'num_repeats = {num_repeats}')
     lines.append(f'flip_aug = {str(bool(flip_aug)).lower()}')
 
