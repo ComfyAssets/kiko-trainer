@@ -39,7 +39,7 @@ export function generateTrainingScript(config: TrainingConfig): string {
     'FLUX.1-schnell': '/home/vito/ai-apps/kiko-trainer/models/unet/flux1-schnell.sft'
   }
   
-  const modelPath = config.pretrainedPath || modelPaths[config.baseModel] || modelPaths['FLUX.1-dev']
+  const modelPath = config.pretrainedPath || modelPaths[config.baseModel as keyof typeof modelPaths] || modelPaths['FLUX.1-dev']
   const clipPath = '/home/vito/ai-apps/kiko-trainer/models/clip/clip_l.safetensors'
   const t5Path = '/home/vito/ai-apps/kiko-trainer/models/clip/t5xxl_fp16.safetensors'
   const aePath = '/home/vito/ai-apps/kiko-trainer/models/vae/ae.sft'
