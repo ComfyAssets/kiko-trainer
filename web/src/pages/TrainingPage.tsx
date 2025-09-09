@@ -261,9 +261,55 @@ const trainingConfig = {
     try { return localStorage.getItem('kiko.console.open') !== 'false' } catch { return true }
   })
   const [consoleHeight, setConsoleHeight] = React.useState<number>(() => {
-    try { return Number(localStorage.getItem('kiko.console.h') || 360) } catch { return 360 }
+    try { 
+      const saved = Number(localStorage.getItem('kiko.console.h') || 360)
+      // Validate saved height against current viewport
+      const maxHeight = Math.round(window.innerHeight * 0.9)
+      const minHeight = 160
+      return Math.min(Math.max(saved, minHeight), maxHeight)
+    } catch { 
+      return Math.min(360, Math.round(window.innerHeight * 0.5)) 
+    }
   })
   const resizeRef = React.useRef<boolean>(false)
+  
+  // Auto-adjust console height when window resizes
+  React.useEffect(() => {
+    const handleResize = () => {
+      setConsoleHeight(prev => {
+        const maxHeight = Math.round(window.innerHeight * 0.9)
+        const minHeight = 160
+        const adjusted = Math.min(Math.max(prev, minHeight), maxHeight)
+        // If current height is off-screen, reset to a sensible default
+        if (prev > window.innerHeight - 100) {
+          return Math.min(360, Math.round(window.innerHeight * 0.5))
+        }
+        return adjusted
+      })
+    }
+    
+    window.addEventListener('resize', handleResize)
+    // Check on mount
+    handleResize()
+    
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+  
+  // When console opens, validate height
+  React.useEffect(() => {
+    if (consoleOpen) {
+      const maxHeight = Math.round(window.innerHeight * 0.9)
+      const minHeight = 160
+      setConsoleHeight(prev => {
+        // If height would put console off screen, reset to default
+        if (prev > window.innerHeight - 100) {
+          return Math.min(360, Math.round(window.innerHeight * 0.5))
+        }
+        return Math.min(Math.max(prev, minHeight), maxHeight)
+      })
+    }
+  }, [consoleOpen])
+  
   React.useEffect(() => { try { localStorage.setItem('kiko.console.open', String(consoleOpen)) } catch {} }, [consoleOpen])
   React.useEffect(() => { try { localStorage.setItem('kiko.console.h', String(consoleHeight)) } catch {} }, [consoleHeight])
   // When the bottom dock is open, prevent page scroll; allow scrolling only inside the dock
@@ -1494,6 +1540,17 @@ const trainingConfig = {
               </div>
               <Button size="sm" variant="outline" onClick={()=>setTermLogs('')}>Clear</Button>
               <Button size="sm" variant="outline" onClick={stopTraining} disabled={!isTraining}>Stop</Button>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                onClick={() => {
+                  const defaultHeight = Math.min(360, Math.round(window.innerHeight * 0.5))
+                  setConsoleHeight(defaultHeight)
+                }}
+                title="Reset terminal height to default"
+              >
+                Reset Size
+              </Button>
               <Button size="sm" variant="outline" onClick={()=>setConsoleOpen(!consoleOpen)}>{consoleOpen ? 'Minimize' : 'Show'}</Button>
             </div>
           </div>
