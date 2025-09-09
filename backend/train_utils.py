@@ -117,6 +117,10 @@ def gen_sh(
     train_t5xxl: bool | None = None,
     text_encoder_lr: str | None = None,
     mixed_precision: str | None = None,
+    # Optional component path overrides
+    clip_path_override: str | None = None,
+    t5xxl_path_override: str | None = None,
+    ae_path_override: str | None = None,
 ):
     output_dir = resolve_path(f"outputs/{output_name}")
     sample_prompts_path = sample_prompts_path_override or resolve_path(f"outputs/{output_name}/sample_prompts.txt")
@@ -177,6 +181,17 @@ def gen_sh(
                 return p
         return paths[0]
 
+    def _override_to_cli_path(p: str | None) -> str | None:
+        if not p:
+            return None
+        p = str(p).strip()
+        if not p:
+            return None
+        if os.path.isabs(p):
+            return f'"{p}"'
+        abs_path = os.path.normpath(os.path.join(ROOT, p))
+        return resolve_path(os.path.relpath(abs_path, ROOT))
+
     clip_abs = _first_existing([
         os.path.join(BASE_MODELS_DIR, "clip/clip_l.safetensors"),
         os.path.join(BASE_MODELS_DIR, "clip_l.safetensors"),
@@ -190,9 +205,9 @@ def gen_sh(
         os.path.join(BASE_MODELS_DIR, "ae.sft"),
     ])
 
-    clip_path = resolve_path(os.path.relpath(clip_abs, ROOT))
-    t5_path = resolve_path(os.path.relpath(t5_abs, ROOT))
-    ae_path = resolve_path(os.path.relpath(ae_abs, ROOT))
+    clip_path = _override_to_cli_path(clip_path_override) or resolve_path(os.path.relpath(clip_abs, ROOT))
+    t5_path = _override_to_cli_path(t5xxl_path_override) or resolve_path(os.path.relpath(t5_abs, ROOT))
+    ae_path = _override_to_cli_path(ae_path_override) or resolve_path(os.path.relpath(ae_abs, ROOT))
 
     # Build argument list and join with proper continuations
     args: list[str] = []

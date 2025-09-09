@@ -2636,6 +2636,9 @@ def api_train_prepare(payload: Dict[str, Any]):
             train_t5xxl=train_t5xxl,
             text_encoder_lr=text_encoder_lr,
             mixed_precision=mp,
+            clip_path_override=payload.get('clip_path') or None,
+            t5xxl_path_override=payload.get('t5_path') or None,
+            ae_path_override=payload.get('ae_path') or None,
         )
         dataset_folder = payload.get("dataset_folder") or f"datasets/{output_name}"
         
@@ -2728,6 +2731,9 @@ def api_train_prepare(payload: Dict[str, Any]):
                 train_clip_l=False,
                 train_t5xxl=False,
                 text_encoder_lr=None,
+                clip_path_override=payload.get('clip_path') or None,
+                t5xxl_path_override=payload.get('t5_path') or None,
+                ae_path_override=payload.get('ae_path') or None,
             )
             sh2_path = tu_resolve_path_without_quotes(f"outputs/{output_name}/train_phase2.sh")
             with open(sh2_path, "w", encoding="utf-8") as f2:
@@ -2783,6 +2789,9 @@ async def api_train_prepare_upload(
     train_batch_size: int = Form(1),
     dataset_folder: Optional[str] = Form(None),
     pretrained_path: Optional[str] = Form(None),
+    clip_path: Optional[str] = Form(None),
+    t5_path: Optional[str] = Form(None),
+    ae_path: Optional[str] = Form(None),
     # Advanced options (optional)
     lr_scheduler: Optional[str] = Form(None),
     lr_warmup_steps: Optional[float] = Form(None),
@@ -2953,6 +2962,14 @@ async def api_train_prepare_upload(
         if isinstance(payload.get("vram"), str):
             vr = str(payload["vram"]).upper().replace("B", "")
             payload["vram"] = vr
+
+        # Include optional component overrides
+        if clip_path:
+            payload["clip_path"] = clip_path
+        if t5_path:
+            payload["t5_path"] = t5_path
+        if ae_path:
+            payload["ae_path"] = ae_path
 
         # Write prompts file now for upload path as well
         try:

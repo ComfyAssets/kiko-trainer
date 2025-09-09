@@ -164,7 +164,7 @@ The web app reads configuration from Vite env vars. Copy `web/.env.example` to `
 
 Defaults are `models` and `outputs`, matching the repo layout and Docker mounts (`/app/models`, `/app/outputs`).
 
-In the Training page, “Model Paths (Advanced)” lets you override UNet/CLIP/T5/VAE paths for the generated training script and exports. Leave these fields empty to use env defaults. Backend training resolves paths on the server and does not depend on these UI overrides.
+In the Training page, “Model Paths (Advanced)” lets you override UNet/CLIP/T5/VAE paths. If provided, the backend will use these overrides for training; otherwise it resolves paths server-side from your configured models directory. These overrides are also reflected in the generated script and exports.
 
 ## 📖 Usage
 

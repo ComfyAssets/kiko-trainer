@@ -481,9 +481,11 @@ const trainingConfig = {
           fd.append('bucket_no_upscale', String(!!bucketNoUpscale))
           if (resizeInterpolation) fd.append('resize_interpolation', String(resizeInterpolation))
         }
-        if (selectedModelData?.path) {
-          fd.append('pretrained_path', selectedModelData.path)
-        }
+        const unetOverride = (overrideUnet && overrideUnet.trim()) || selectedModelData?.path
+        if (unetOverride) fd.append('pretrained_path', unetOverride)
+        if (overrideClip.trim()) fd.append('clip_path', overrideClip.trim())
+        if (overrideT5.trim()) fd.append('t5_path', overrideT5.trim())
+        if (overrideAe.trim()) fd.append('ae_path', overrideAe.trim())
         const caps = images.map(img => img.caption || '')
         fd.append('captions', JSON.stringify(caps))
         images.forEach(img => fd.append('images', img.file, img.file.name))
@@ -491,7 +493,10 @@ const trainingConfig = {
       } else {
         const prepBody: any = {
           base_model: baseModel,
-          pretrained_path: selectedModelData?.path,
+          pretrained_path: (overrideUnet && overrideUnet.trim()) || selectedModelData?.path,
+          clip_path: overrideClip.trim() || undefined,
+          t5_path: overrideT5.trim() || undefined,
+          ae_path: overrideAe.trim() || undefined,
           lora_name: loraName || 'MyLoRA',
           resolution: parseInt(res),
           seed,
