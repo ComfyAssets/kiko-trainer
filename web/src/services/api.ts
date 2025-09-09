@@ -2,7 +2,7 @@ import axios from 'axios';
 import { Model } from '../types';
 import { API_CONFIG } from '../config/api';
 
-const API_BASE = import.meta.env.DEV ? '/api' : `${window.location.origin.replace(/:\d+$/, ':8888')}/api`;
+// API_BASE removed - using API_CONFIG.baseUrl instead
 
 const api = axios.create({
   baseURL: `${API_CONFIG.baseUrl}/api`,
