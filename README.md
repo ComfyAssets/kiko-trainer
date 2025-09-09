@@ -16,6 +16,7 @@ A modern, React-based web application for training FLUX LoRA models with integra
 ## 🌟 Features
 
 ### Core Capabilities
+
 - **🖼️ Advanced Image Captioning** - Support for Florence-2 and Qwen2.5-VL models
 - **📦 Automated Dataset Creation** - Smart image processing with latent caching
 - **🚀 FLUX LoRA Training** - Full integration with kohya-ss/sd-scripts
@@ -24,6 +25,7 @@ A modern, React-based web application for training FLUX LoRA models with integra
 - **💾 Model Management** - Download from CivitAI and HuggingFace with preview support
 
 ### Modern UI Features
+
 - **Responsive Design** - Works on desktop and mobile devices
 - **Dark Mode** - Easy on the eyes during long training sessions
 - **Real-time Updates** - WebSocket-based live training logs
@@ -39,20 +41,20 @@ graph TB
         Store[Zustand State]
         API_Client[API Client]
     end
-    
+
     subgraph "Backend - FastAPI"
         Server[FastAPI Server]
         Vision[Vision Models]
         Training[Training Manager]
         Downloads[Download Manager]
     end
-    
+
     subgraph "External Services"
         HF[HuggingFace]
         Civit[CivitAI]
         SD[sd-scripts]
     end
-    
+
     UI --> Store
     Store --> API_Client
     API_Client -->|HTTP/WS| Server
@@ -62,7 +64,7 @@ graph TB
     Training -->|subprocess| SD
     Downloads -->|API| HF
     Downloads -->|API| Civit
-    
+
     style UI fill:#61dafb
     style Server fill:#009688
     style SD fill:#ff6b6b
@@ -71,9 +73,10 @@ graph TB
 ## 🚀 Quick Start
 
 ### Using Docker (Recommended)
+
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/kiko-trainer.git
+git clone git@github.com:ComfyAssets/kiko-trainer.git
 cd kiko-trainer
 
 # Start with Docker Compose
@@ -85,9 +88,10 @@ docker compose up -d --build
 ```
 
 ### Manual Installation
+
 ```bash
 # Clone and setup
-git clone https://github.com/yourusername/kiko-trainer.git
+git clone git@github.com:ComfyAssets/kiko-trainer.git
 cd kiko-trainer
 
 # Setup backend
@@ -118,21 +122,26 @@ npm run dev
 ### Backend Setup
 
 1. **Clone the repository**
+
 ```bash
-git clone https://github.com/yourusername/kiko-trainer.git
+git clone git@github.com:ComfyAssets/kiko-trainer.git
 cd kiko-trainer
 ```
 
 2. **Run the setup script**
+
 ```bash
 ./setup.sh
 ```
+
 This will:
+
 - Clone kohya-ss/sd-scripts (required dependency)
 - Create a Python virtual environment
 - Install all Python dependencies
 
 3. **GPU Setup (if needed)**
+
 ```bash
 # For CUDA 12.1
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
@@ -157,17 +166,19 @@ graph LR
     D --> E[Start Training]
     E --> F[Monitor Progress]
     F --> G[Publish to HF]
-    
+
     style A fill:#4ade80
     style G fill:#60a5fa
 ```
 
 ### 1. Model Management
+
 - Navigate to the **Models** tab
 - Enter your CivitAI API key (get from [CivitAI Account](https://civitai.com/user/account))
 - Download FLUX models and required components
 
 ### 2. Image Captioning
+
 - Go to **Setup** tab
 - Upload your images via drag & drop
 - Choose captioning model:
@@ -176,12 +187,14 @@ graph LR
 - Configure caption settings and generate
 
 ### 3. Dataset Creation
+
 - Set output folder name
 - Choose resolution (512, 768, 1024)
 - Enable latent caching for faster training
 - Create dataset
 
 ### 4. Training Configuration
+
 - Navigate to **Training** tab
 - Select base model and dataset
 - Configure hyperparameters:
@@ -191,6 +204,7 @@ graph LR
 - Start training
 
 ### 5. Publishing
+
 - Go to **Publish** tab
 - Select trained LoRA
 - Enter HuggingFace credentials
@@ -203,11 +217,11 @@ graph LR
 
 The application supports multiple vision-language models:
 
-| Model | Size | Quality | Speed | VRAM |
-|-------|------|---------|-------|------|
-| Florence-2 | 0.7B | Good | Fast | 4GB |
-| Qwen2.5-VL-3B | 3B | Better | Medium | 8GB |
-| Qwen2.5-VL-7B | 7B | Best | Slow | 16GB |
+| Model         | Size | Quality | Speed  | VRAM |
+| ------------- | ---- | ------- | ------ | ---- |
+| Florence-2    | 0.7B | Good    | Fast   | 4GB  |
+| Qwen2.5-VL-3B | 3B   | Better  | Medium | 8GB  |
+| Qwen2.5-VL-7B | 7B   | Best    | Slow   | 16GB |
 
 ### Training Parameters
 
@@ -224,6 +238,7 @@ save_every_n_steps: 100
 ### Metrics Monitoring
 
 Real-time training metrics include:
+
 - Loss curves
 - Learning rate schedule
 - Memory usage
@@ -234,17 +249,17 @@ Real-time training metrics include:
 
 ### Core Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/health` | GET | Health check |
-| `/api/models` | GET | List available models |
-| `/api/caption` | POST | Caption images |
-| `/api/create_dataset` | POST | Create training dataset |
-| `/api/train/prepare` | POST | Prepare training scripts |
-| `/api/train/start` | POST | Start training |
-| `/api/train/logs` | GET | Get training logs |
-| `/api/loras` | GET | List trained LoRAs |
-| `/api/publish` | POST | Publish to HuggingFace |
+| Endpoint              | Method | Description              |
+| --------------------- | ------ | ------------------------ |
+| `/api/health`         | GET    | Health check             |
+| `/api/models`         | GET    | List available models    |
+| `/api/caption`        | POST   | Caption images           |
+| `/api/create_dataset` | POST   | Create training dataset  |
+| `/api/train/prepare`  | POST   | Prepare training scripts |
+| `/api/train/start`    | POST   | Start training           |
+| `/api/train/logs`     | GET    | Get training logs        |
+| `/api/loras`          | GET    | List trained LoRAs       |
+| `/api/publish`        | POST   | Publish to HuggingFace   |
 
 ### WebSocket Endpoints
 
@@ -289,7 +304,7 @@ services:
       - ./outputs:/app/outputs
     environment:
       - HF_HUB_ENABLE_HF_TRANSFER=1
-      
+
   web:
     build: ./web
     ports:
@@ -357,18 +372,21 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ### Common Issues
 
 **CUDA not detected**
+
 ```bash
 # Install CUDA-compatible PyTorch
 pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
 **Out of Memory**
+
 - Reduce batch size to 1
 - Enable gradient checkpointing
 - Use 8-bit optimization
 - Consider using a smaller vision model
 
 **Port already in use**
+
 ```bash
 # Change backend port
 uvicorn backend.server:app --port 8002
